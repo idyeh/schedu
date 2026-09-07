@@ -99,6 +99,7 @@ import type {
 type Data = {
   user: User | null;
   needsSetup?: boolean;
+  requiresSetupToken?: boolean;
   defaults?: { language: string; theme: string };
   settings: Settings;
   staff: { id: string; name: string; englishName: string; role: string }[];
@@ -216,6 +217,10 @@ const csvCell = (s: unknown) =>
     .replaceAll('"', '""') +
   '"';
 const errorMessages: Record<string, [string, string]> = {
+  invalid_setup_token: [
+    'Enter the setup token configured by the server administrator.',
+    '请输入服务器管理员配置的初始化令牌。',
+  ],
   invalid_credentials: [
     'Check your institutional ID and password (at least 8 characters).',
     '请检查学号 / 工号及密码（至少 8 位）。',
@@ -654,6 +659,7 @@ export default function Home() {
                       action: data?.needsSetup ? 'setup' : 'login',
                       id: f.get('id'),
                       password: f.get('password'),
+                      setupToken: f.get('setupToken'),
                       profile: {
                         chineseName: f.get('name'),
                         englishName: f.get('name'),
@@ -663,6 +669,20 @@ export default function Home() {
                   );
                 }}
               >
+                {data?.requiresSetupToken && (
+                  <Field label={t('Server setup token', '服务器初始化令牌')}>
+                    <input
+                      name="setupToken"
+                      type="password"
+                      required
+                      autoComplete="off"
+                      placeholder={t(
+                        'Provided by your server administrator',
+                        '由服务器管理员提供',
+                      )}
+                    />
+                  </Field>
+                )}
                 {data?.needsSetup && (
                   <Field label={t('Administrator name', '管理员姓名')}>
                     <input name="name" required maxLength={80} />

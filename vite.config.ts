@@ -1,4 +1,3 @@
-import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
 import { defineConfig } from 'vite';
@@ -35,6 +34,30 @@ const localBindingConfig = {
 };
 
 export default defineConfig(async () => {
+  if (process.env.SCHEDU_TARGET === 'node') {
+    return {
+      resolve: {
+        alias: {
+          '@/db/runtime': new URL('./db/runtime.node.ts', import.meta.url)
+            .pathname,
+        },
+      },
+      css: { postcss: { plugins: [tailwindcss()] } },
+      plugins: [
+        {
+          name: 'schedu-node-storage',
+          enforce: 'pre',
+          load(id: string) {
+            if (id === new URL('./db/runtime.ts', import.meta.url).pathname) {
+              return `export * from ${JSON.stringify(new URL('./db/runtime.node.ts', import.meta.url).pathname)}`;
+            }
+          },
+        },
+        vinext(),
+      ],
+    };
+  }
+  const { sites } = await import('@openai/sites-vite-plugin');
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= 'false';

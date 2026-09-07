@@ -38,3 +38,8 @@ next-env.d.ts
 /work/
 
 *.tsbuildinfo
+/data/
+/backups/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

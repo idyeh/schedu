@@ -1,7 +1,7 @@
-import { env } from 'cloudflare:workers';
+import { database, requestOrigin } from '@/db/runtime';
+export { database } from '@/db/runtime';
 import { defaultSettings } from './model';
 import type { Settings, User, Booking } from './model';
-export const database = () => env.DB;
 export const uuid = () => crypto.randomUUID();
 const hex = (b: ArrayBuffer) =>
   Array.from(new Uint8Array(b), (v) => v.toString(16).padStart(2, '0')).join(
@@ -86,7 +86,7 @@ export async function getUser(req: Request): Promise<User | null> {
   return row ? safeUser(row) : null;
 }
 export function sessionCookie(req: Request, token: string, maxAge = 604800) {
-  return `schedu_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${new URL(req.url).protocol === 'https:' ? '; Secure' : ''}`;
+  return `schedu_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${new URL(requestOrigin(req)).protocol === 'https:' ? '; Secure' : ''}`;
 }
 export async function newSession(req: Request, userId: string) {
   const token = uuid() + uuid();

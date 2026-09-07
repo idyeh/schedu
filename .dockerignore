@@ -1,0 +1,16 @@
+.git
+node_modules
+dist
+.wrangler
+.vinext
+.next
+.env*
+*.env
+*.tsbuildinfo
+data
+backups
+*.sqlite*
+*.tar
+*.tar.gz
+tests
+VALIDATION.md

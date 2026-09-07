@@ -14,3 +14,15 @@
 `npx tsc --noEmit`
 
 For workflow checks, build the app and start an isolated Worker on port 3001 with persistence at `/private/tmp/schedu-integration-state`. Request `/api/app` once to create the local database, then run `python3 tests/integration.py`. The script resets only that isolated test database and must never be aimed at production.
+
+## Self-hosted Docker deployment
+
+- Standalone Node build and TypeScript check pass without the Sites/Cloudflare plugins.
+- Seven model/storage tests pass, including schema migration replay, persistence after reopening SQLite and rollback of a failed batch.
+- All five workflow groups pass against an isolated native Node/SQLite instance, including the self-hosted setup-token requirement.
+- Docker Compose image built and ran successfully on Linux ARM64, using the Docker Official Image mirror on Amazon ECR because Docker Hub was unreachable from the build environment.
+- Container checks pass for the health endpoint, setup-token enforcement, institutional login, roster import, permission checks, booking and cancellation.
+- Accounts, sessions, a booking and its cancellation restriction survived container replacement with the same volume.
+- The online SQLite backup was opened and verified to contain the saved booking.
+- Verified runtime UID 1000 and host-only test binding. No OpenAI sign-in or Cloudflare imports were found in the standalone application output.
+- Docker test project `schedu-check` used temporary host port 18080; the native test server used 3002. These are test-only ports, not defaults or additional services in the delivered stack. Deployment ports are listed in DEPLOYMENT.md.

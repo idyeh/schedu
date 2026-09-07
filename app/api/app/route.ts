@@ -1,4 +1,10 @@
 import {
+  setupTokenRequired,
+  validSetupToken,
+  requestOrigin,
+  rateLimitScope,
+} from '@/db/runtime';
+import {
   database,
   getSettings,
   getUser,
@@ -69,6 +75,7 @@ async function state(req: Request) {
     return {
       user: null,
       needsSetup: count!.n === 0,
+      requiresSetupToken: count!.n === 0 && setupTokenRequired(),
       defaults: {
         language: settings.defaultLanguage,
         theme: settings.defaultTheme,
@@ -149,7 +156,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const origin = req.headers.get('origin');
-    if (origin && origin !== new URL(req.url).origin) fail('forbidden');
+    if (origin && origin !== requestOrigin(req)) fail('forbidden');
     if (req.headers.get('sec-fetch-site') === 'cross-site') fail('forbidden');
     if (!req.headers.get('content-type')?.includes('application/json'))
       fail('invalid_request');
@@ -166,9 +173,7 @@ export async function POST(req: Request) {
         b.password.length > 128
       )
         fail('invalid_credentials');
-      const key = await hashToken(
-        `${req.headers.get('cf-connecting-ip') || 'local'}:${b.id}`,
-      );
+      const key = await hashToken(`${rateLimitScope(req)}:${b.id}`);
       const rate = await db
         .prepare('SELECT * FROM attempts WHERE key=?')
         .bind(key)
@@ -181,6 +186,7 @@ export async function POST(req: Request) {
         .bind(key, now + 900000, now, now)
         .run();
       if (b.action === 'setup') {
+        if (!validSetupToken(b.setupToken)) fail('invalid_setup_token');
         const p = cleanProfile({ ...b.profile, grade: currentYear() });
         if (!p.chineseName) fail('profile_incomplete');
         const result = await db.batch([
@@ -610,6 +616,7 @@ export async function POST(req: Request) {
       'profile_incomplete',
       'forbidden',
       'invalid_credentials',
+      'invalid_setup_token',
       'rate_limited',
       'setup_complete',
       'unauthorised',

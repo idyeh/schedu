@@ -1,16 +1,26 @@
 """Run only against an isolated wrangler server on localhost:3001.
 The fixture database must be beneath /private/tmp/schedu-integration-state.
 """
-import concurrent.futures, datetime, glob, http.cookiejar, json, sqlite3, urllib.request, urllib.error, unittest
+import concurrent.futures, datetime, glob, http.cookiejar, json, sqlite3, urllib.request, urllib.error, unittest, os
 from pathlib import Path
-BASE='http://localhost:3001'
-DBS=[p for p in glob.glob('/private/tmp/schedu-integration-state/v3/d1/miniflare-D1DatabaseObject/*.sqlite') if not p.endswith('metadata.sqlite')]
-assert len(DBS)==1, 'Start isolated server and request /api/app once'
-DB=DBS[0]
+NODE = os.environ.get('SCHEDU_TEST_NODE') == '1'
+BASE = 'http://localhost:3002' if NODE else 'http://localhost:3001'
+if NODE:
+    DB = '/private/tmp/schedu-node-integration/schedu.sqlite'
+    assert Path(DB).exists(), 'Start isolated Node server and request /api/health once'
+else:
+    DBS=[p for p in glob.glob('/private/tmp/schedu-integration-state/v3/d1/miniflare-D1DatabaseObject/*.sqlite') if not p.endswith('metadata.sqlite')]
+    assert len(DBS)==1, 'Start isolated server and request /api/app once'
+    DB=DBS[0]
 with sqlite3.connect(DB) as db:
-    for table in ['sessions','bookings','users','settings','attempts']:
-        db.execute('DROP TABLE IF EXISTS '+table)
-    db.executescript(Path('drizzle/0000_odd_karnak.sql').read_text())
+    if NODE:
+        for table in ['sessions','bookings','users','settings','attempts']:
+            db.execute('DELETE FROM '+table)
+    else:
+        for table in ['sessions','bookings','users','settings','attempts']:
+            db.execute('DROP TABLE IF EXISTS '+table)
+        db.executescript(Path('drizzle/0000_odd_karnak.sql').read_text())
+SETUP_TOKEN = os.environ.get('SCHEDU_SETUP_TOKEN','')
 class Client:
     def __init__(self):
         self.jar=http.cookiejar.CookieJar()
@@ -27,8 +37,11 @@ class Client:
         return data
 admin=Client(); anon=Client()
 assert anon.ok()['needsSetup']
-admin.ok({'action':'setup','id':'testadmin','password':'test-passphrase-2026','profile':{'chineseName':'测试管理员'}})
-assert anon.call({'action':'setup','id':'otheradmin','password':'test-passphrase-2026','profile':{'chineseName':'测试'}})[1]['error']=='setup_complete'
+if NODE:
+    assert anon.ok()['requiresSetupToken']
+    assert anon.call({'action':'setup','id':'badadmin','password':'test-password','profile':{'chineseName':'test'}})[1]['error']=='invalid_setup_token'
+admin.ok({'action':'setup','setupToken':SETUP_TOKEN,'id':'testadmin','password':'test-passphrase-2026','profile':{'chineseName':'测试管理员'}})
+assert anon.call({'action':'setup','setupToken':SETUP_TOKEN,'id':'otheradmin','password':'test-passphrase-2026','profile':{'chineseName':'测试'}})[1]['error']=='setup_complete'
 settings=admin.ok()['settings']
 now=datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
 year=now.year

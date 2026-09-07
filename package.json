@@ -11,7 +11,9 @@
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
     "format": "oxfmt",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "build:docker": "SCHEDU_TARGET=node vinext build",
+    "test:sqlite": "node --experimental-strip-types --test tests/sqlite.test.ts"
   },
   "dependencies": {
     "react": "19.2.6",
