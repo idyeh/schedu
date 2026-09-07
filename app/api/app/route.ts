@@ -25,7 +25,7 @@ import {
   currentYear,
   defaultSettings,
 } from '@/lib/model';
-import type { User, Profile, Settings, Booking } from '@/lib/model';
+import type { User, Profile, Settings, Booking, Slot } from '@/lib/model';
 export const dynamic = 'force-dynamic';
 const reply = (
   body: unknown,
@@ -289,11 +289,48 @@ export async function POST(req: Request) {
         .prepare("SELECT id FROM users WHERE role IN ('instructor','admin')")
         .all();
       if (
-        s.windows.some((w) =>
+        [...s.windows, ...(s.slotOverrides || [])].some((w) =>
           w.instructors.some((id) => !staff.results.some((u) => u.id === id)),
         )
       )
         fail('invalid_instructor');
+      const occupiedRows = await db
+        .prepare(
+          "SELECT slot_id,slot FROM bookings WHERE status IN ('submitted','approved','in_progress') AND ends_at>?",
+        )
+        .bind(now)
+        .all();
+      const previous = new Map(
+        generateSlots(
+          { ...settings, horizonDays: settings.horizonDays + 2 },
+          now - 86400000,
+        ).map((slot) => [slot.id, slot]),
+      );
+      const next = new Map(
+        generateSlots(
+          { ...s, horizonDays: s.horizonDays + 2 },
+          now - 86400000,
+        ).map((slot) => [slot.id, slot]),
+      );
+      const details = (slot: Slot | undefined) =>
+        slot &&
+        JSON.stringify([
+          slot.date,
+          slot.start,
+          slot.end,
+          slot.location,
+          [...slot.instructors].sort((a, b) => a.localeCompare(b)),
+          slot.capacity,
+        ]);
+      for (const row of occupiedRows.results) {
+        const before = previous.get(String(row.slot_id));
+        // Old snapshots outside the current timetable remain historical records.
+        if (
+          before &&
+          details(before) !== details(next.get(String(row.slot_id)))
+        )
+          fail('booked_slot_locked');
+      }
       await db
         .prepare(
           'INSERT INTO settings(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value',
@@ -351,11 +388,116 @@ export async function POST(req: Request) {
         credentials: checked.map((r) => ({ id: r.id, password: r.password })),
       });
     }
+    if (b.action === 'updateUser') {
+      requireAdmin(user);
+      const target = await db
+        .prepare("SELECT * FROM users WHERE id=? AND role!='admin'")
+        .bind(b.id)
+        .first();
+      if (!target) fail('forbidden');
+      const profile = cleanProfile(b.profile);
+      if (!profile.chineseName) fail('profile_incomplete');
+      if (target.role === 'student') {
+        const error = profileError(profile, settings);
+        if (error) fail(error);
+      }
+      await db
+        .prepare('UPDATE users SET profile=? WHERE id=?')
+        .bind(JSON.stringify(profile), b.id)
+        .run();
+      return reply({ ok: true });
+    }
+    if (b.action === 'bulkUsers') {
+      requireAdmin(user);
+      if (
+        !Array.isArray(b.ids) ||
+        !b.ids.length ||
+        b.ids.length > 100 ||
+        new Set(b.ids).size !== b.ids.length ||
+        b.ids.some((id: unknown) => !validId(id)) ||
+        !['delete', 'resetPassword', 'student', 'instructor'].includes(
+          b.operation,
+        )
+      )
+        fail('invalid_request');
+      const statements = [],
+        credentials = [];
+      for (const id of b.ids) {
+        const target = await db
+          .prepare("SELECT * FROM users WHERE id=? AND role!='admin'")
+          .bind(id)
+          .first();
+        if (!target) fail('forbidden');
+        if (b.operation === 'delete' || b.operation === 'student') {
+          if (
+            [...settings.windows, ...(settings.slotOverrides || [])].some((w) =>
+              w.instructors.includes(id),
+            )
+          )
+            fail('assigned_instructor');
+          const assigned = await db
+            .prepare(
+              "SELECT slot FROM bookings WHERE status IN ('submitted','approved','in_progress')",
+            )
+            .all();
+          if (
+            assigned.results.some((r) =>
+              JSON.parse(String(r.slot)).instructors.includes(id),
+            )
+          )
+            fail('assigned_instructor');
+        }
+        if (b.operation !== 'resetPassword') {
+          const rows = await db
+            .prepare('SELECT status FROM bookings WHERE student_id=?')
+            .bind(id)
+            .all();
+          if (b.operation === 'delete' && rows.results.length)
+            fail('user_has_history');
+          if (
+            b.operation !== 'delete' &&
+            target.role !== b.operation &&
+            rows.results.some((r) =>
+              ['submitted', 'approved', 'in_progress'].includes(
+                String(r.status),
+              ),
+            )
+          )
+            fail('active_bookings');
+        }
+        statements.push(
+          db.prepare('DELETE FROM sessions WHERE user_id=?').bind(id),
+        );
+        if (b.operation === 'delete')
+          statements.push(db.prepare('DELETE FROM users WHERE id=?').bind(id));
+        else if (b.operation === 'resetPassword') {
+          const password = randomPassword();
+          credentials.push({ id, password });
+          statements.push(
+            db
+              .prepare('UPDATE users SET password=?,first_login=1 WHERE id=?')
+              .bind(await passwordHash(password), id),
+          );
+        } else
+          statements.push(
+            db
+              .prepare('UPDATE users SET role=? WHERE id=?')
+              .bind(b.operation, id),
+          );
+      }
+      await db.batch(statements);
+      return reply({
+        ok: true,
+        ...(credentials.length ? { credentials } : {}),
+      });
+    }
     if (b.action === 'role') {
       requireAdmin(user);
       if (!['student', 'instructor'].includes(b.role)) fail('forbidden');
       if (
-        settings.windows.some((w) => w.instructors.includes(b.id)) &&
+        [...settings.windows, ...(settings.slotOverrides || [])].some((w) =>
+          w.instructors.includes(b.id),
+        ) &&
         b.role === 'student'
       )
         fail('assigned_instructor');
@@ -608,6 +750,8 @@ export async function POST(req: Request) {
     const message = e instanceof Error ? e.message : 'invalid_request';
     const known = [
       'invalid_settings',
+      'booked_slot_locked',
+      'user_has_history',
       'window_overlap',
       'invalid_csv',
       'invalid_grade',

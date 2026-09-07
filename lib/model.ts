@@ -46,6 +46,7 @@ export type Settings = {
   evaluations: Evaluation[];
   windows: Window[];
   closedDates: string[];
+  slotOverrides?: SlotOverride[];
 };
 export type Slot = {
   id: string;
@@ -60,6 +61,23 @@ export type Slot = {
   capacity: number;
   remaining: number;
 };
+export type SlotOverride = Pick<
+  Slot,
+  | 'id'
+  | 'windowId'
+  | 'date'
+  | 'start'
+  | 'end'
+  | 'location'
+  | 'instructors'
+  | 'capacity'
+> & { enabled: boolean };
+// getRandomValues is available on plain HTTP; randomUUID requires a secure context.
+export function clientId() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+    b.toString(16).padStart(2, '0'),
+  ).join('');
+}
 export type Booking = {
   id: string;
   studentId: string;
@@ -162,7 +180,32 @@ export function generateSlots(settings: Settings, now = Date.now()): Slot[] {
       }
     }
   }
-  return slots.sort(
+  const overrides = new Map(
+    (settings.slotOverrides || []).map((s) => [s.id, s]),
+  );
+  const effective = slots.filter((s) => !overrides.has(s.id));
+  for (const s of overrides.values()) {
+    const startsAt = Date.parse(`${s.date}T${s.start}:00+08:00`);
+    if (
+      !s.enabled ||
+      settings.closedDates.includes(s.date) ||
+      startsAt <= now ||
+      startsAt >= base + settings.horizonDays * 86400000
+    )
+      continue;
+    if (
+      s.windowId &&
+      !settings.windows.some((w) => w.id === s.windowId && w.enabled)
+    )
+      continue;
+    effective.push({
+      ...s,
+      startsAt,
+      endsAt: Date.parse(`${s.date}T${s.end}:00+08:00`),
+      remaining: s.capacity,
+    });
+  }
+  return effective.sort(
     (a, b) => a.startsAt - b.startsAt || a.id.localeCompare(b.id),
   );
 }
@@ -272,6 +315,59 @@ export function validateSettings(s: Settings) {
     )
       throw Error('invalid_settings');
   }
+  const overrides = s.slotOverrides || [];
+  if (
+    !Array.isArray(overrides) ||
+    overrides.length > 500 ||
+    new Set(overrides.map((o) => o.id)).size !== overrides.length
+  )
+    throw Error('invalid_settings');
+  for (const o of overrides) {
+    if (
+      !/^[\w:.-]{1,100}$/.test(o.id) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(o.date) ||
+      !Number.isFinite(Date.parse(o.date)) ||
+      new Date(o.date).toISOString().slice(0, 10) !== o.date ||
+      !/^([01]\d|2[0-3]):[0-5]\d$/.test(o.start) ||
+      !/^([01]\d|2[0-3]):[0-5]\d$/.test(o.end) ||
+      minutes(o.end) <= minutes(o.start) ||
+      !o.location?.trim() ||
+      o.location.length > 120 ||
+      !Number.isInteger(o.capacity) ||
+      o.capacity < 1 ||
+      o.capacity > 10 ||
+      !Array.isArray(o.instructors) ||
+      o.instructors.length > 10 ||
+      new Set(o.instructors).size !== o.instructors.length ||
+      typeof o.enabled !== 'boolean' ||
+      typeof o.windowId !== 'string' ||
+      (o.windowId && !s.windows.some((w) => w.id === o.windowId))
+    )
+      throw Error('invalid_settings');
+  }
+  // Check dated exceptions against recurring slots, including dates beyond the booking horizon.
+  for (const date of new Set(
+    overrides.filter((o) => o.enabled).map((o) => o.date),
+  )) {
+    const effective = generateSlots(
+      { ...s, horizonDays: 1 },
+      Date.parse(`${date}T00:00:00+08:00`),
+    );
+    for (let i = 0; i < effective.length; i++)
+      for (
+        let j = i + 1;
+        j < effective.length && effective[j].startsAt < effective[i].endsAt;
+        j++
+      ) {
+        const a = effective[i],
+          b = effective[j];
+        if (
+          a.location === b.location ||
+          a.instructors.some((id) => b.instructors.includes(id))
+        )
+          throw Error('window_overlap');
+      }
+  }
   for (let i = 0; i < s.windows.length; i++)
     for (let j = i + 1; j < s.windows.length; j++) {
       const a = s.windows[i],
@@ -288,7 +384,10 @@ export function validateSettings(s: Settings) {
         throw Error('window_overlap');
     }
 }
-export function parseCSV(text: string): Record<string, string>[] {
+export function parseCSV(
+  text: string,
+  requiredHeaders = ['id'],
+): Record<string, string>[] {
   const rows: string[][] = [];
   let row: string[] = [],
     cell = '',
@@ -317,10 +416,56 @@ export function parseCSV(text: string): Record<string, string>[] {
   if (row.some((x) => x.trim())) rows.push(row);
   if (rows.length < 2) throw Error('invalid_csv');
   const headers = rows.shift()!.map((x) => x.trim());
-  if (new Set(headers).size !== headers.length || !headers.includes('id'))
+  if (
+    new Set(headers).size !== headers.length ||
+    requiredHeaders.some((h) => !headers.includes(h))
+  )
     throw Error('invalid_csv');
   return rows.map((r) => {
     if (r.length !== headers.length) throw Error('invalid_csv');
     return Object.fromEntries(headers.map((h, i) => [h, r[i].trim()]));
+  });
+}
+
+export function timetableWindows(text: string): Window[] {
+  const rows = parseCSV(text, [
+    'day',
+    'instructors',
+    'start',
+    'end',
+    'location',
+    'capacity',
+  ]);
+  if (!rows.length || rows.length > 50) throw Error('invalid_csv');
+  const days = [
+    'sunday',
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday',
+  ];
+  const chinese = ['日', '一', '二', '三', '四', '五', '六'];
+  return rows.map((r) => {
+    const label = r.day.toLowerCase();
+    let day = days.findIndex((d) => d === label || d.slice(0, 3) === label);
+    if (/^[0-6]$/.test(label)) day = Number(label);
+    if (/^(星期|周)[日天一二三四五六]$/.test(label))
+      day = label.endsWith('天') ? 0 : chinese.indexOf(label.at(-1)!);
+    if (day < 0) throw Error('invalid_csv');
+    return {
+      id: clientId(),
+      day,
+      start: r.start,
+      end: r.end,
+      location: r.location,
+      capacity: Number(r.capacity),
+      instructors: r.instructors
+        .split(';')
+        .map((v) => v.trim())
+        .filter(Boolean),
+      enabled: true,
+    };
   });
 }

@@ -7,6 +7,8 @@ import {
   currentYear,
   validateSettings,
   parseCSV,
+  timetableWindows,
+  clientId,
 } from '../lib/model.ts';
 const monday = new Date('2026-09-07T08:00:00+08:00').getTime();
 const settings = {
@@ -99,4 +101,77 @@ test('CSV parsing handles BOM, commas, multiline cells and escaped quotation mar
   assert.equal(rows[1].englishName, 'Li "Four"\nStudent');
   assert.throws(() => parseCSV('id,name\n123,"broken'));
   assert.throws(() => parseCSV('id,name\n123,A,B'));
+});
+
+test('dated overrides edit one occurrence, close slots and add one-off slots', () => {
+  const original = generateSlots(settings, monday)[0];
+  const edited = { ...original, start: '18:31', end: '18:41', enabled: true };
+  const updated = { ...settings, slotOverrides: [edited] };
+  assert.doesNotThrow(() => validateSettings(updated));
+  assert.equal(
+    generateSlots(updated, monday).find((s) => s.id === original.id)?.start,
+    '18:31',
+  );
+  assert.equal(
+    generateSlots(
+      { ...settings, slotOverrides: [{ ...edited, enabled: false }] },
+      monday,
+    ).length,
+    5,
+  );
+  const added = {
+    ...edited,
+    id: 'extra',
+    windowId: '',
+    start: '21:00',
+    end: '21:10',
+  };
+  assert.equal(
+    generateSlots({ ...settings, slotOverrides: [added] }, monday).length,
+    7,
+  );
+  assert.throws(
+    () =>
+      validateSettings({
+        ...settings,
+        slotOverrides: [{ ...added, start: '18:35', end: '18:50' }],
+      }),
+    /window_overlap/,
+  );
+  assert.equal(
+    generateSlots(
+      { ...settings, closedDates: [original.date], slotOverrides: [added] },
+      monday,
+    ).length,
+    0,
+  );
+  assert.throws(
+    () =>
+      validateSettings({
+        ...settings,
+        slotOverrides: [{ ...added, date: '2026-02-30' }],
+      }),
+    /invalid_settings/,
+  );
+});
+
+test('HTTP-compatible identifiers and bilingual timetable import', () => {
+  assert.match(clientId(), /^[a-f0-9]{32}$/);
+  const windows = timetableWindows(
+    'day,instructors,start,end,location,capacity\n星期一,teacher1;teacher2,18:30,20:05,A302,2\nTue,teacher1,18:30,20:05,A302,1',
+  );
+  assert.deepEqual(
+    windows.map((w) => w.day),
+    [1, 2],
+  );
+  assert.deepEqual(windows[0].instructors, ['teacher1', 'teacher2']);
+  assert.doesNotThrow(() => validateSettings({ ...defaultSettings, windows }));
+  assert.throws(
+    () =>
+      timetableWindows(
+        'day,instructors,start,end,location,capacity\nNoday,teacher1,18:30,20:05,A302,2',
+      ),
+    /invalid_csv/,
+  );
+  assert.throws(() => timetableWindows('id,name\n1,A'), /invalid_csv/);
 });

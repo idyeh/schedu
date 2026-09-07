@@ -78,6 +78,11 @@ import {
   TableRow,
   TableCell,
 } from '@/components/ui/table';
+import {
+  UserManager,
+  TimetableImport,
+  SlotManager,
+} from '@/components/admin-tools';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
@@ -86,6 +91,7 @@ import {
   chinaDate,
   currentYear,
   parseCSV,
+  clientId,
   profileError,
 } from '@/lib/model';
 import type {
@@ -217,6 +223,14 @@ const csvCell = (s: unknown) =>
     .replaceAll('"', '""') +
   '"';
 const errorMessages: Record<string, [string, string]> = {
+  booked_slot_locked: [
+    'Cancel active bookings before changing or removing their time slots.',
+    '修改或移除时段前，请先取消相关的有效预约。',
+  ],
+  user_has_history: [
+    'This account has meeting records and cannot be deleted.',
+    '此账号有预约记录，无法删除。',
+  ],
   invalid_setup_token: [
     'Enter the setup token configured by the server administrator.',
     '请输入服务器管理员配置的初始化令牌。',
@@ -346,9 +360,7 @@ export default function Home() {
     [userModal, setUserModal] = useState(false),
     [importRows, setImportRows] = useState<Record<string, string>[] | null>(
       null,
-    ),
-    [query, setQuery] = useState('');
-  const [resetTarget, setResetTarget] = useState<string | null>(null);
+    );
   const t: T = (en, zh) => (lang === 'zh-CN' ? zh : en);
   const locale = lang === 'zh-CN' ? 'zh-CN' : 'en-GB';
   const dateText = (
@@ -1682,6 +1694,7 @@ export default function Home() {
             <Schedule
               settings={settings}
               staff={data!.staff}
+              slots={data!.slots}
               t={t}
               busy={busy}
               error={
@@ -1754,117 +1767,44 @@ export default function Home() {
                   {t('Issue account', '创建账号')}
                 </button>
               </PageHeading>
-              <section className="panel users-panel">
-                <div className="section-heading">
-                  <h3>
-                    {t('All accounts', '全部账号')}{' '}
-                    <span className="count">{data!.users.length}</span>
-                  </h3>
-                  <input
-                    className="search"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder={t(
-                      'Search name, ID or class…',
-                      '搜索姓名、学号或班级…',
-                    )}
-                    aria-label={t('Search accounts', '搜索账号')}
-                  />
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      {[
-                        t('Name / ID', '姓名 / 账号'),
-                        t('Entry / class', '入学年份 / 班级'),
-                        t('Role', '角色'),
-                        t('Account', '账号状态'),
-                        t('Actions', '操作'),
-                      ].map((h) => (
-                        <TableHead key={h}>{h}</TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {data!.users
-                      .filter((u) =>
-                        `${u.id} ${u.profile.chineseName} ${u.profile.englishName} ${u.profile.adminClass}`
-                          .toLowerCase()
-                          .includes(query.toLowerCase()),
+              <UserManager
+                users={data!.users}
+                now={data!.serverTime}
+                t={t}
+                busy={busy}
+                error={
+                  error
+                    ? t(
+                        ...(errorMessages[error] || [
+                          'Could not save.',
+                          '保存失败。',
+                        ]),
                       )
-                      .map((u) => (
-                        <TableRow key={u.id}>
-                          <TableCell>
-                            <strong>{displayName(u)}</strong>
-                            <small className="table-sub">{u.id}</small>
-                          </TableCell>
-                          <TableCell>
-                            {u.role === 'student' ? (
-                              <>
-                                {u.profile.grade}
-                                <small className="table-sub">
-                                  {u.profile.adminClass || '—'} ·{' '}
-                                  {u.profile.teachingClass || '—'}
-                                </small>
-                              </>
-                            ) : (
-                              '—'
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {u.role === 'admin' ? (
-                              <span className="subtle-chip">
-                                {t('Administrator', '管理员')}
-                              </span>
-                            ) : (
-                              <Choice
-                                label={t('Account role', '账号角色')}
-                                value={u.role}
-                                disabled={busy}
-                                onChange={(role) =>
-                                  act({ action: 'role', id: u.id, role })
-                                }
-                                options={[
-                                  {
-                                    value: 'student',
-                                    label: t('Student', '学生'),
-                                  },
-                                  {
-                                    value: 'instructor',
-                                    label: t('Instructor', '教师'),
-                                  },
-                                ]}
-                              />
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <span
-                              className={`status ${u.blockedUntil > Date.now() ? 'cancelled' : 'approved'}`}
-                            >
-                              <span />
-                              {u.blockedUntil > Date.now()
-                                ? t('Booking paused', '预约暂停')
-                                : u.firstLogin
-                                  ? t('First login pending', '待首次登录')
-                                  : t('Active', '正常')}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            {u.role !== 'admin' && (
-                              <button
-                                className="text-button"
-                                disabled={busy}
-                                onClick={() => setResetTarget(u.id)}
-                              >
-                                {t('Reset password', '重置密码')}
-                              </button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                  </TableBody>
-                </Table>
-              </section>
+                    : ''
+                }
+                act={async (body) => {
+                  const result = await act(body);
+                  if (result?.credentials) setCredentials(result.credentials);
+                  return result;
+                }}
+                renderProfile={(target, done) => (
+                  <ProfileForm
+                    user={target}
+                    settings={settings}
+                    t={t}
+                    busy={busy}
+                    onSave={async (profile) => {
+                      const result = await act({
+                        action: 'updateUser',
+                        id: target.id,
+                        profile,
+                      });
+                      if (result) done();
+                      return result;
+                    }}
+                  />
+                )}
+              />
             </>
           )}
           <footer className="workspace-footer">
@@ -1881,45 +1821,6 @@ export default function Home() {
           </footer>
         </main>
       </SidebarInset>
-      <AlertDialog
-        open={!!resetTarget}
-        onOpenChange={(o) => !o && setResetTarget(null)}
-      >
-        <AlertDialogContent className="app-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t('Reset this account’s password?', '重置此账号的密码？')}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {resetTarget} ·{' '}
-              {t(
-                'Their current password will stop working and they will be signed out. A new random password will be shown for you to download.',
-                '当前密码将失效，已登录的会话将退出。系统将生成新的随机密码，供你下载。',
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {errorBox()}
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('Go back', '返回')}</AlertDialogCancel>
-            <button
-              className="primary"
-              disabled={busy}
-              onClick={async () => {
-                const r = await act({
-                  action: 'resetPassword',
-                  id: resetTarget,
-                });
-                if (r) {
-                  setResetTarget(null);
-                  setCredentials(r.credentials);
-                }
-              }}
-            >
-              {t('Reset password', '重置密码')}
-            </button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
       <Dialog open={confirmBook} onOpenChange={setConfirmBook}>
         <DialogContent className="app-dialog">
           <DialogHeader>
@@ -2730,6 +2631,7 @@ function IssueAccount({
 function Schedule({
   settings,
   staff,
+  slots,
   t,
   busy,
   error,
@@ -2737,6 +2639,7 @@ function Schedule({
 }: {
   settings: Settings;
   staff: Data['staff'];
+  slots: Slot[];
   t: T;
   busy: boolean;
   error: string;
@@ -2765,7 +2668,7 @@ function Schedule({
           className="primary"
           onClick={() =>
             setEditing({
-              id: crypto.randomUUID(),
+              id: clientId(),
               day: 1,
               start: '18:30',
               end: '20:05',
@@ -2834,12 +2737,28 @@ function Schedule({
           </section>
         ))}
       </div>
+      <TimetableImport
+        settings={settings}
+        staff={staff}
+        t={t}
+        busy={busy}
+        onSave={onSave}
+      />
+      <SlotManager
+        settings={settings}
+        slots={slots}
+        staff={staff}
+        t={t}
+        busy={busy}
+        error={error}
+        onSave={onSave}
+      />
       <section className="panel exceptions-panel">
         <h3>{t('Dates off', '停课日期')}</h3>
         <p className="muted">
           {t(
-            'No new slots will be offered on these dates. Existing bookings remain and can be cancelled individually. One date per line, YYYY-MM-DD.',
-            '这些日期不再提供新时段，已有预约需单独处理。每行一个日期，格式为 YYYY-MM-DD。',
+            'No new slots will be offered on these dates. Cancel active bookings first. One date per line, YYYY-MM-DD.',
+            '这些日期不再提供新时段，请先取消相关的有效预约。每行一个日期，格式为 YYYY-MM-DD。',
           )}
         </p>
         <textarea
@@ -2870,8 +2789,8 @@ function Schedule({
             <DialogTitle>{t('Teaching window', '辅导时间范围')}</DialogTitle>
             <DialogDescription>
               {t(
-                'Students book time slots and can meet any instructor assigned here. Changes affect new slots; existing bookings retain their original details.',
-                '学生预约时段后可与此处任一教师交流。修改仅影响新时段，已有预约保留原信息。',
+                'Students can meet any instructor assigned here. Cancel active bookings before changing their slots. Historical records are retained.',
+                '学生可与此处任一教师交流。修改时段前须先取消相关的有效预约，历史记录会保留。',
               )}
             </DialogDescription>
           </DialogHeader>
@@ -2999,6 +2918,9 @@ function Schedule({
                           ...settings,
                           windows: settings.windows.filter(
                             (w) => w.id !== editing.id,
+                          ),
+                          slotOverrides: (settings.slotOverrides || []).filter(
+                            (s) => s.windowId !== editing.id,
                           ),
                         })
                       )

@@ -130,4 +130,56 @@ class Flows(unittest.TestCase):
         reset=admin.ok({'action':'resetPassword','id':'student1'})['credentials'][0]
         self.assertIsNone(a.ok()['user'])
         a.ok({'action':'login','id':'student1','password':reset['password']});self.assertTrue(a.ok()['user']['firstLogin'])
+    def test_06_user_crud_and_bulk_actions(self):
+        one,oldpass=issue('bulk1'); two,_=issue('bulk2')
+        self.assertEqual(a.call({'action':'bulkUsers','ids':['bulk1'],'operation':'delete'})[0],403)
+        self.assertEqual(a.call({'action':'updateUser','id':'bulk1','profile':profile()})[0],403)
+        updated=profile('修改后的姓名',fresh=False)
+        admin.ok({'action':'updateUser','id':'bulk1','profile':updated})
+        self.assertEqual(one.ok()['user']['profile'],updated)
+        self.assertEqual(admin.call({'action':'bulkUsers','ids':['bulk1','student1'],'operation':'delete'})[1]['error'],'user_has_history')
+        self.assertIsNotNone(one.ok()['user'])
+        self.assertEqual(admin.call({'action':'bulkUsers','ids':['bulk1','testadmin'],'operation':'instructor'})[0],403)
+        self.assertEqual(one.ok()['user']['role'],'student')
+        admin.ok({'action':'bulkUsers','ids':['bulk1','bulk2'],'operation':'instructor'})
+        self.assertIsNone(one.ok()['user'])
+        creds=admin.ok({'action':'bulkUsers','ids':['bulk1','bulk2'],'operation':'resetPassword'})['credentials']
+        self.assertEqual(len(creds),2)
+        self.assertEqual(Client().call({'action':'login','id':'bulk1','password':oldpass})[1]['error'],'invalid_credentials')
+        one.ok({'action':'login','id':creds[0]['id'],'password':creds[0]['password']})
+        self.assertTrue(one.ok()['user']['firstLogin'])
+        admin.ok({'action':'bulkUsers','ids':['bulk1','bulk2'],'operation':'delete'})
+        self.assertIsNone(one.ok()['user'])
+        self.assertFalse(any(u['id'] in ['bulk1','bulk2'] for u in admin.ok()['users']))
+
+    def test_07_slot_crud_and_booking_protection(self):
+        state=admin.ok(); cfg=state['settings']; original=state['slots'][0]
+        override={k:original[k] for k in ['id','windowId','date','start','end','location','instructors','capacity']}
+        override.update(enabled=True,location='Edited room')
+        cfg['slotOverrides']=[override]
+        admin.ok({'action':'settings','settings':cfg})
+        self.assertEqual(next(s for s in admin.ok()['slots'] if s['id']==original['id'])['location'],'Edited room')
+        student,_=issue('slotstudent')
+        booking=student.ok({'action':'book','slotId':original['id']})
+        override['enabled']=False
+        self.assertEqual(admin.call({'action':'settings','settings':cfg})[1]['error'],'booked_slot_locked')
+        self.assertEqual(admin.call({'action':'bulkUsers','ids':['slotstudent'],'operation':'instructor'})[1]['error'],'active_bookings')
+        self.assertEqual(admin.call({'action':'bulkUsers','ids':['teacher1'],'operation':'student'})[1]['error'],'assigned_instructor')
+        admin.ok({'action':'transition','id':booking['id'],'status':'cancelled'})
+        admin.ok({'action':'settings','settings':cfg})
+        self.assertFalse(any(s['id']==original['id'] for s in student.ok()['slots']))
+        override['enabled']=True
+        admin.ok({'action':'settings','settings':cfg})
+        self.assertTrue(any(s['id']==original['id'] for s in student.ok()['slots']))
+        extra={**override,'id':'extra-slot','windowId':'','start':'21:00','end':'21:10'}
+        cfg['slotOverrides'].append(extra)
+        admin.ok({'action':'settings','settings':cfg})
+        self.assertTrue(any(s['id']=='extra-slot' for s in student.ok()['slots']))
+        extra['instructors']=['missing-teacher']
+        self.assertEqual(admin.call({'action':'settings','settings':cfg})[1]['error'],'invalid_instructor')
+        cfg['slotOverrides']=[]
+        cfg['windows']=[]
+        admin.ok({'action':'settings','settings':cfg})
+        self.assertEqual(student.ok()['slots'],[])
+
 if __name__=='__main__':unittest.main(verbosity=2)

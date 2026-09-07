@@ -482,6 +482,8 @@ textarea:focus {
   display: none;
 }
 .workspace {
+  display: flex;
+  flex-direction: column;
   max-width: 1500px;
   width: 100%;
   padding: 38px 44px 0;
@@ -946,7 +948,7 @@ textarea:focus {
   font-size: 12px;
   color: var(--muted-foreground);
   padding: 30px 0 24px;
-  margin-top: 20px;
+  margin-top: auto;
 }
 .workspace-footer > span:first-child {
   font-weight: 500;
@@ -1969,4 +1971,34 @@ textarea:focus {
     animation: none !important;
     transition: none !important;
   }
+}
+
+.workspace > * {
+  flex-shrink: 0;
+}
+.admin-toolbar {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 16px 0;
+}
+.admin-select {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--foreground);
+}
+.admin-panel {
+  margin-top: 24px;
+  padding: 24px;
+}
+.admin-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.admin-panel .checkbox-label {
+  flex-direction: row;
 }

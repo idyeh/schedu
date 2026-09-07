@@ -27,3 +27,10 @@ Use Node 22.13 or later. Install with the existing package lock. `npm run dev` s
 ## Docker deployment
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the self-hosted stack, setup, Mainland China/offline deployment, backups and the complete port list. Docker uses institutional login and local SQLite; OpenAI SSO and Cloudflare are not required. The hosted preview remains a separate deployment.
+
+## Administration
+
+- **Accounts:** create or import accounts, search, edit profiles, change roles, reset passwords and delete unused non-admin accounts. Select up to 100 accounts for a bulk role change, password reset or deletion. A failed validation leaves the whole selection unchanged. Meeting records and instructor assignments prevent deletion; passwords are shown once for download after a reset.
+- **Schedule:** add, edit, pause or delete weekly teaching windows. The timetable CSV template accepts `day,instructors,start,end,location,capacity`; separate multiple instructor IDs with `;`. Review the preview before importing. Imports append windows and reject overlapping assignments or unknown instructors.
+- **Individual slots:** choose a date to edit or close one occurrence, reopen it, or add a one-off slot. Weekly recurrence is unchanged. Dates off and the booking horizon still apply. Cancel active reservations before changing their time slots; staff cancellations do not penalise students.
+- Both languages and the current theme apply to these controls. Teaching-window creation also works on plain HTTP deployments.
