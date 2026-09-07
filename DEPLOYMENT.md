@@ -58,7 +58,38 @@ Use the institution's certificates. SchedU does not contact an external certific
 
 ## Mainland China and offline delivery
 
-Only the image-build stage needs registry access. `NODE_IMAGE` and `NPM_REGISTRY` can be set to institution-approved mirrors. The default Node image is pinned to `node:24.19.0-bookworm-slim`, and JavaScript packages are pinned in the lockfile. An alternate mirror for the same Docker Official Image is `public.ecr.aws/docker/library/node:24.19.0-bookworm-slim`; availability depends on your network.
+Only the image-build stage needs registry access. The default npm registry is `https://registry.npmmirror.com`, as documented by the [mirror operator](https://npmmirror.com). `NODE_IMAGE` and `NPM_REGISTRY` can be set to institution-approved mirrors. The default Node image is pinned to `node:24.19.0-bookworm-slim`, and JavaScript packages are pinned in the lockfile. An alternate mirror for the same Docker Official Image is `public.ecr.aws/docker/library/node:24.19.0-bookworm-slim`; availability depends on your network.
+
+### Fix an npm install that stalls on a Mainland China server
+
+In the existing `.env`, set:
+
+```dotenv
+NPM_REGISTRY=https://registry.npmmirror.com
+```
+
+Then, from the project directory containing `compose.yaml`:
+
+```sh
+docker compose --progress plain build app
+docker compose up -d --no-build --wait
+docker compose ps
+docker compose logs --tail=100 app
+```
+
+The updated Dockerfile first checks registry connectivity, then prints HTTP download progress with bounded per-request retries/timeouts. A changed registry build argument invalidates the dependency-install layer automatically; `--no-cache` is normally unnecessary.
+
+If the build still prints `registry.npmjs.org`, an existing `.env` or exported shell variable is overriding the default. To force this setting for one build without printing other environment values:
+
+```sh
+NPM_REGISTRY=https://registry.npmmirror.com docker compose --progress plain build app
+```
+
+Changing `npm config` on the host alone does not change this Docker build. Keep `package-lock.json`: it uses the default npm registry, so [npm supports switching registries](https://docs.npmjs.com/cli/v12/using-npm/registry/) without regenerating it. Versions and integrity checks remain pinned. Keep TLS certificate verification enabled.
+
+If a specific mirror package returns 404 or remains unavailable, use another institution-approved npm mirror or the offline image method below. If the failure instead occurs at `FROM node:...`, change `NODE_IMAGE` to a reachable image registry: `NPM_REGISTRY` affects npm packages only. Host connectivity does not prove Docker build-network connectivity.
+
+### Offline image delivery
 
 Alternatively, build on a connected machine and transfer a completed image:
 

@@ -1,10 +1,15 @@
 ARG NODE_IMAGE=node:24.19.0-bookworm-slim
 FROM ${NODE_IMAGE} AS builder
 WORKDIR /build
-ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json ./
-RUN npm ci --registry="${NPM_REGISTRY}" --ignore-scripts --no-audit --no-fund
+# Check the selected registry early, then print download progress instead of silently waiting.
+# The npmjs.org URLs in the lockfile follow --registry; versions and integrity hashes stay pinned.
+RUN npm ping --registry="${NPM_REGISTRY}" --fetch-retries=1 --fetch-timeout=20000 \
+    && npm ci --registry="${NPM_REGISTRY}" --ignore-scripts --no-audit --no-fund \
+       --loglevel=http --fetch-retries=2 --fetch-timeout=60000 \
+       --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=10000
 COPY . .
 RUN npm run build:docker
 
