@@ -155,8 +155,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function Brand() {
   return (
     <a className="brand" href="/" aria-label="SchedU">
-      <img src="/icon.svg" alt="" />
-      Sched<span>U</span>
+      <span className="brand-mark" aria-hidden="true" />
+      Sched<span className="brand-u">U</span>
     </a>
   );
 }

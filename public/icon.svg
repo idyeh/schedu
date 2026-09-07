@@ -1,1 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#176d5b"/><rect x="14" y="16" width="36" height="36" rx="9" fill="none" stroke="#fff" stroke-width="3"/><path d="M23 12v9m18-9v9M15 27h34M24 34v6a8 8 0 0 0 16 0v-6" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" fill="currentColor">
+  <title>SchedU</title>
+  <style>
+    :root { color: #176d5b; }
+    @media (prefers-color-scheme: dark) { :root { color: #59c5a6; } }
+  </style>
+  <!-- Calendar frame, with an open lower-right corner beside the U. -->
+  <path d="M66 34H49C29 34 14 49 14 70V264C14 285 29 300 49 300H172L154 278H49C41 278 36 272 36 264V107H295V70C295 49 280 34 259 34H241V56H258C267 56 273 62 273 71V86H36V71C36 62 42 56 50 56H66Z"/>
+  <rect x="66" y="18" width="23" height="52" rx="6"/>
+  <rect x="219" y="18" width="23" height="52" rx="6"/>
+  <rect x="115" y="32" width="26" height="26" rx="6"/>
+  <rect x="167" y="32" width="26" height="26" rx="6"/>
+  <!-- Serif U and its angular lower bowl follow the supplied artwork. -->
+  <path d="M166 134H220V155H204V263L219 278H257L272 263V155H255V134H311V155H295V268Q295 272 292 275L271 296Q267 300 262 300H216Q211 300 207 296L186 275Q182 271 182 266V155H166Z"/>
+</svg>
