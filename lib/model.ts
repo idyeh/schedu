@@ -497,3 +497,35 @@ export function availabilityDays(
     };
   });
 }
+
+export function accountStatus(
+  user: User,
+  now: number,
+): 'paused' | 'pending' | 'active' {
+  if (user.role === 'student' && user.blockedUntil > now) return 'paused';
+  return user.firstLogin ? 'pending' : 'active';
+}
+export function paginationItems(
+  current: number,
+  total: number,
+): (number | 'ellipsis')[] {
+  const start = Math.max(1, Math.min(current - 2, total - 4));
+  const end = Math.min(total, start + 4);
+  const pages = Array.from(
+    new Set([
+      1,
+      ...Array.from({ length: end - start + 1 }, (_, i) => start + i),
+      total,
+    ]),
+  ).sort((a, b) => a - b);
+  const items: (number | 'ellipsis')[] = [];
+  for (const page of pages) {
+    const previous = items.at(-1);
+    if (typeof previous === 'number' && page - previous === 2)
+      items.push(previous + 1);
+    else if (typeof previous === 'number' && page - previous > 2)
+      items.push('ellipsis');
+    items.push(page);
+  }
+  return items;
+}

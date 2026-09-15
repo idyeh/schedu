@@ -230,4 +230,58 @@ class Flows(unittest.TestCase):
         admin.ok({'action':'settings','settings':cfg})
         student.ok({'action':'book','slotId':student.ok()['slots'][0]['id']})
 
+    def test_10_bulk_lift_booking_pauses(self):
+        first,_=issue('pause1'); second,_=issue('pause2')
+        slots=first.ok()['slots']
+        for client,slot in [(first,slots[1]),(second,slots[2])]:
+            booking=client.ok({'action':'book','slotId':slot['id']})
+            client.ok({'action':'transition','id':booking['id'],'status':'cancelled'})
+            self.assertGreater(client.ok()['user']['blockedUntil'],now.timestamp()*1000)
+        self.assertEqual(first.call({'action':'bulkUsers','ids':['pause1'],'operation':'liftBookingPause'})[0],403)
+        teacher_before=teacher.ok()['user']
+        result=admin.ok({'action':'bulkUsers','ids':['pause1','pause2','teacher1','testadmin','large0000'],'operation':'liftBookingPause'})
+        self.assertEqual(result['updated'],2)
+        self.assertEqual(first.ok()['user']['blockedUntil'],0)
+        self.assertEqual(second.ok()['user']['blockedUntil'],0)
+        self.assertEqual(teacher.ok()['user'],teacher_before)
+        self.assertEqual(len(first.ok()['bookings']),1)
+        self.assertEqual(first.ok()['bookings'][0]['status'],'cancelled')
+        first.ok({'action':'book','slotId':slots[1]['id']})
+        self.assertEqual(admin.ok({'action':'bulkUsers','ids':['pause1'],'operation':'liftBookingPause'})['updated'],0)
+
+    def test_11_reset_clears_all_dependants_and_retains_admins(self):
+        keeper,password=issue('resetKeeper','instructor')
+        admin.ok({'action':'role','id':'resetKeeper','role':'admin'})
+        keeper.ok({'action':'login','id':'resetKeeper','password':password})
+        cfg=admin.ok()['settings'];cfg['cancellationWeeks']=3
+        cfg['closedDates']=[(tomorrow+datetime.timedelta(days=1)).strftime('%Y-%m-%d')]
+        cfg['slotOverrides']=[{'id':'resetextra','windowId':'','date':tomorrow.strftime('%Y-%m-%d'),'start':'21:00','end':'21:10','location':'B201','instructors':['teacher1'],'capacity':1,'enabled':True}]
+        admin.ok({'action':'settings','settings':cfg})
+        before=admin.ok();admins_before=[u for u in before['users'] if u['role']=='admin']
+        self.assertEqual(a.call({'action':'resetData','confirmation':'RESET SchedU','currentPassword':'test-passphrase-2026'})[0],403)
+        self.assertEqual(admin.call({'action':'resetData','confirmation':'RESET','currentPassword':'test-passphrase-2026'})[1]['error'],'reset_confirmation_required')
+        self.assertEqual(admin.call({'action':'resetData','confirmation':'RESET SchedU','currentPassword':'wrong-password'})[1]['error'],'incorrect_current_password')
+        unchanged=admin.ok()
+        self.assertEqual(len(unchanged['users']),len(before['users']))
+        self.assertEqual(len(unchanged['bookings']),len(before['bookings']))
+        self.assertEqual(unchanged['settings'],cfg)
+        admin.ok({'action':'resetData','confirmation':'RESET SchedU','currentPassword':'test-passphrase-2026'})
+        after=admin.ok()
+        self.assertEqual(after['users'],admins_before)
+        self.assertEqual(after['bookings'],[])
+        self.assertEqual(after['slots'],[])
+        self.assertEqual(after['settings']['windows'],[])
+        self.assertEqual(after['settings']['closedDates'],[])
+        self.assertEqual(after['settings'].get('slotOverrides',[]),[])
+        self.assertEqual(after['settings']['cancellationWeeks'],2)
+        self.assertEqual(keeper.ok()['user']['role'],'admin')
+        self.assertIsNone(a.ok()['user'])
+        self.assertFalse(anon.ok()['needsSetup'])
+        with sqlite3.connect(DB) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM bookings').fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM sessions WHERE user_id NOT IN (SELECT id FROM users WHERE role='admin')").fetchone()[0],0)
+            self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
+        fresh,_=issue('afterReset')
+        self.assertEqual(fresh.ok()['user']['id'],'afterReset')
+
 if __name__=='__main__':unittest.main(verbosity=2)

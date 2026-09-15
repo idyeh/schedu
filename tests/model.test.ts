@@ -10,6 +10,8 @@ import {
   timetableWindows,
   clientId,
   availabilityDays,
+  accountStatus,
+  paginationItems,
 } from '../lib/model.ts';
 const monday = new Date('2026-09-07T08:00:00+08:00').getTime();
 const settings = {
@@ -227,4 +229,54 @@ test('availability covers 28 dated days, closures, one-off edits and occupied se
   assert.equal(preview[1].bookable, false);
   assert.equal(preview[7].closed, true);
   assert.equal(preview[7].slots.length, 0);
+});
+
+test('account status distinguishes current student pauses from expired or staff restrictions', () => {
+  const user = {
+    id: 'student',
+    role: 'student' as const,
+    profile: {
+      grade: 2026,
+      adminClass: '26电H一',
+      teachingClass: '',
+      chineseName: '张三',
+      englishName: 'San Zhang',
+      phone: '',
+    },
+    firstLogin: 1,
+    blockedUntil: monday + 1,
+  };
+  assert.equal(accountStatus(user, monday), 'paused');
+  assert.equal(
+    accountStatus({ ...user, blockedUntil: monday }, monday),
+    'pending',
+  );
+  assert.equal(
+    accountStatus({ ...user, role: 'instructor', firstLogin: 0 }, monday),
+    'active',
+  );
+});
+test('pagination shows neighbours, first and last pages without duplicate numbers', () => {
+  assert.deepEqual(paginationItems(1, 1), [1]);
+  assert.deepEqual(paginationItems(1, 25), [1, 2, 3, 4, 5, 'ellipsis', 25]);
+  assert.deepEqual(paginationItems(12, 25), [
+    1,
+    'ellipsis',
+    10,
+    11,
+    12,
+    13,
+    14,
+    'ellipsis',
+    25,
+  ]);
+  assert.deepEqual(paginationItems(25, 25), [
+    1,
+    'ellipsis',
+    21,
+    22,
+    23,
+    24,
+    25,
+  ]);
 });

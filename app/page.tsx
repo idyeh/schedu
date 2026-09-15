@@ -35,6 +35,7 @@ import {
   LoaderCircle,
 } from 'lucide-react';
 import { AvailabilityCalendar } from '@/components/availability-calendar';
+import { DataReset } from '@/components/data-reset';
 import { Choice } from '@/components/choice';
 import {
   Dialog,
@@ -186,6 +187,14 @@ const csvCell = (s: unknown) =>
     .replaceAll('"', '""') +
   '"';
 const errorMessages: Record<string, [string, string]> = {
+  reset_confirmation_required: [
+    'Type RESET SchedU exactly to confirm.',
+    '请准确输入 RESET SchedU 确认。',
+  ],
+  incorrect_current_password: [
+    'Your current password is incorrect.',
+    '当前密码不正确。',
+  ],
   booked_slot_locked: [
     'Cancel active bookings before changing or removing their time slots.',
     '修改或移除时段前，请先取消相关的有效预约。',
@@ -1684,12 +1693,40 @@ export default function Home() {
             />
           )}
           {view === 'settings' && user.role === 'admin' && (
-            <SettingsPage
-              settings={settings}
-              t={t}
-              busy={busy}
-              onSave={(s) => act({ action: 'settings', settings: s })}
-            />
+            <>
+              <SettingsPage
+                settings={settings}
+                t={t}
+                busy={busy}
+                onSave={(s) => act({ action: 'settings', settings: s })}
+              />
+              <DataReset
+                users={data!.users}
+                bookings={data!.bookings}
+                settings={settings}
+                t={t}
+                busy={busy}
+                error={
+                  error
+                    ? t(
+                        ...(errorMessages[error] || [
+                          'Could not reset data.',
+                          '无法重置数据。',
+                        ]),
+                      )
+                    : ''
+                }
+                onReset={(confirmation, currentPassword) =>
+                  act(
+                    { action: 'resetData', confirmation, currentPassword },
+                    t(
+                      'App data reset. Administrator accounts were retained.',
+                      '应用数据已重置，管理员账号已保留。',
+                    ),
+                  )
+                }
+              />
+            </>
           )}
           {view === 'users' && user.role === 'admin' && (
             <>

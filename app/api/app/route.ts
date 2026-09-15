@@ -394,6 +394,56 @@ export async function POST(req: Request) {
         credentials: checked.map((r) => ({ id: r.id, password: r.password })),
       });
     }
+    if (b.action === 'resetData') {
+      requireAdmin(user);
+      if (b.confirmation !== 'RESET SchedU')
+        fail('reset_confirmation_required');
+      const row = await db
+        .prepare("SELECT password FROM users WHERE id=? AND role='admin'")
+        .bind(user.id)
+        .first<{ password: string }>();
+      if (
+        !row ||
+        typeof b.currentPassword !== 'string' ||
+        b.currentPassword.length > 128 ||
+        !(await passwordMatches(b.currentPassword, row.password))
+      )
+        fail('incorrect_current_password');
+      // Recheck the administrator inside the transaction in case access changed during password verification.
+      const allowed =
+        "EXISTS (SELECT 1 FROM users actor WHERE actor.id=? AND actor.role='admin' AND actor.password=?)";
+      const result = await db.batch([
+        db
+          .prepare(
+            "UPDATE users SET blocked_until=0 WHERE id=? AND role='admin' AND password=?",
+          )
+          .bind(user.id, row.password),
+        db
+          .prepare(`DELETE FROM bookings WHERE ${allowed}`)
+          .bind(user.id, row.password),
+        db
+          .prepare(
+            `DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE role!='admin') AND ${allowed}`,
+          )
+          .bind(user.id, row.password),
+        db
+          .prepare(`DELETE FROM users WHERE role!='admin' AND ${allowed}`)
+          .bind(user.id, row.password),
+        db
+          .prepare(
+            `INSERT INTO settings(id,value) SELECT 1,? WHERE ${allowed} ON CONFLICT(id) DO UPDATE SET value=excluded.value`,
+          )
+          .bind(JSON.stringify(defaultSettings), user.id, row.password),
+        db
+          .prepare(`DELETE FROM attempts WHERE ${allowed}`)
+          .bind(user.id, row.password),
+        db
+          .prepare(`UPDATE users SET blocked_until=0 WHERE ${allowed}`)
+          .bind(user.id, row.password),
+      ]);
+      if (!result[0].meta.changes) fail('forbidden');
+      return reply({ ok: true });
+    }
     if (b.action === 'updateUser') {
       requireAdmin(user);
       const target = await db
@@ -414,6 +464,8 @@ export async function POST(req: Request) {
       return reply({ ok: true });
     }
     if (b.action === 'role') {
+      if (!['student', 'instructor', 'admin'].includes(b.role))
+        fail('invalid_request');
       b.action = 'bulkUsers';
       b.ids = [b.id];
       b.operation = b.role;
@@ -426,11 +478,25 @@ export async function POST(req: Request) {
         b.ids.length > 100 ||
         new Set(b.ids).size !== b.ids.length ||
         b.ids.some((id: unknown) => !validId(id)) ||
-        !['delete', 'resetPassword', 'student', 'instructor', 'admin'].includes(
-          b.operation,
-        )
+        ![
+          'delete',
+          'resetPassword',
+          'student',
+          'instructor',
+          'admin',
+          'liftBookingPause',
+        ].includes(b.operation)
       )
         fail('invalid_request');
+      if (b.operation === 'liftBookingPause') {
+        const result = await db
+          .prepare(
+            "UPDATE users SET blocked_until=0 WHERE role='student' AND blocked_until>? AND id IN (SELECT value FROM json_each(?))",
+          )
+          .bind(now, JSON.stringify(b.ids))
+          .run();
+        return reply({ ok: true, updated: result.meta.changes });
+      }
       const statements = [],
         credentials = [];
       for (const id of b.ids) {
@@ -764,6 +830,8 @@ export async function POST(req: Request) {
       'password_length',
       'invalid_instructor',
       'last_admin',
+      'reset_confirmation_required',
+      'incorrect_current_password',
       'protected_admin',
       'roster_too_large',
       'invalid_roster',

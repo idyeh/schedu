@@ -154,3 +154,10 @@ docker compose up -d --build --wait app
 ```
 
 Startup applies `0001_keep_last_admin.sql` automatically. It protects the final administrator against role removal and deletion; existing users and bookings are preserved. No new ports, services or environment variables are needed. CSV imports support 1,200 students and larger rosters without a row-count limit; if an external reverse proxy is used, allow request bodies up to 20 MB on `/api/app`.
+
+
+## Clearing data after testing
+
+An administrator can open **Configuration → Reset app data** to review and clear all non-admin data. This includes every meeting, feedback record, student/instructor account, schedule and custom configuration, even if real records have already been entered. All administrator accounts and credentials are retained. The reset requires typing `RESET SchedU` and entering the administrator's current password. It does not change Docker ports, volumes or environment settings, and does not reopen first-time setup.
+
+Take an online backup using the backup commands above before confirming. Existing backup files are retained, and restoring a backup is the recovery path if a reset was unintended. The roster filtering, pagination and reset update requires rebuilding the app image; no additional database migration is needed.

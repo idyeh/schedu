@@ -8,6 +8,12 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Choice } from '@/components/choice';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+} from '@/components/ui/pagination';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
@@ -19,6 +25,8 @@ import {
 } from '@/components/ui/table';
 import {
   clientId,
+  accountStatus,
+  paginationItems,
   chinaDate,
   timetableWindows,
   validateSettings,
@@ -78,11 +86,19 @@ export function UserManager({
       operation: string;
     } | null>(null),
     [editing, setEditing] = useState<User | null>(null),
-    [page, setPage] = useState(0);
-  const visible = users.filter((u) =>
+    [page, setPage] = useState(0),
+    [jumpPage, setJumpPage] = useState(''),
+    [statusFilter, setStatusFilter] = useState('all');
+  const matching = users.filter((u) =>
     `${u.id} ${u.profile.chineseName} ${u.profile.englishName} ${u.profile.adminClass}`
       .toLowerCase()
       .includes(query.toLowerCase()),
+  );
+  const visible = matching.filter(
+    (u) => statusFilter === 'all' || accountStatus(u, now) === statusFilter,
+  );
+  const pausedSelected = selected.filter((id) =>
+    users.some((u) => u.id === id && accountStatus(u, now) === 'paused'),
   );
   const pageCount = Math.max(1, Math.ceil(visible.length / 50));
   const currentPage = Math.min(page, pageCount - 1);
@@ -95,6 +111,7 @@ export function UserManager({
     instructor: t('Set role: instructor', '设为教师'),
     admin: t('Grant admin access', '授予管理员权限'),
     delete: t('Delete accounts', '删除账号'),
+    liftBookingPause: t('Lift booking pause', '解除预约暂停'),
   };
   return (
     <section className="panel users-panel">
@@ -114,6 +131,36 @@ export function UserManager({
           }}
         />
       </div>
+      <ToggleGroup
+        className="account-status-toggle"
+        aria-label={t('Account status filter', '账号状态筛选')}
+        value={[statusFilter]}
+        onValueChange={(values) => {
+          if (values.length) {
+            setStatusFilter(String(values[0]));
+            setPage(0);
+            setJumpPage('');
+            setSelected([]);
+          }
+        }}
+      >
+        {[
+          ['all', t('All accounts', '全部账号')],
+          ['paused', t('Booking paused', '预约暂停')],
+          ['active', t('Active', '正常')],
+          ['pending', t('First login pending', '待首次登录')],
+        ].map(([value, label]) => (
+          <ToggleGroupItem key={value} value={value}>
+            {label}{' '}
+            <span className="count">
+              {value === 'all'
+                ? matching.length
+                : matching.filter((u) => accountStatus(u, now) === value)
+                    .length}
+            </span>
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
       <div className="admin-toolbar">
         <span>
           {t(
@@ -133,8 +180,18 @@ export function UserManager({
         />
         <button
           className="secondary"
-          disabled={busy || !selected.length || selected.length > 100}
-          onClick={() => setConfirm({ ids: selected, operation })}
+          disabled={
+            busy ||
+            !selected.length ||
+            selected.length > 100 ||
+            (operation === 'liftBookingPause' && !pausedSelected.length)
+          }
+          onClick={() =>
+            setConfirm({
+              ids: operation === 'liftBookingPause' ? pausedSelected : selected,
+              operation,
+            })
+          }
         >
           {t('Apply to selected', '应用到所选账号')}
         </button>
@@ -210,7 +267,8 @@ export function UserManager({
                     {u.profile.grade}
                     <small className="table-sub">
                       {u.profile.adminClass || '—'} ·{' '}
-                      {u.profile.teachingClass || '—'}
+                      {u.profile.teachingClass ||
+                        t('Unassigned Teaching Class', '未分配教学班级')}
                     </small>
                   </>
                 ) : (
@@ -249,9 +307,9 @@ export function UserManager({
                 )}
               </TableCell>
               <TableCell>
-                {u.blockedUntil > now
+                {accountStatus(u, now) === 'paused'
                   ? t('Booking paused', '预约暂停')
-                  : u.firstLogin
+                  : accountStatus(u, now) === 'pending'
                     ? t('First login pending', '待首次登录')
                     : t('Active', '正常')}
               </TableCell>
@@ -296,27 +354,108 @@ export function UserManager({
           )}
         </TableBody>
       </Table>
-      <div className="admin-toolbar people-pagination">
-        <span>
+      <div className="people-pagination">
+        <p aria-live="polite">
           {t(
             `${visible.length} accounts · Page ${currentPage + 1} of ${pageCount}`,
             `${visible.length} 个账号 · 第 ${currentPage + 1} / ${pageCount} 页`,
           )}
-        </span>
-        <button
-          className="secondary"
-          disabled={currentPage === 0}
-          onClick={() => setPage(currentPage - 1)}
+        </p>
+        <Pagination aria-label={t('Roster pagination', '名单分页')}>
+          <PaginationContent className="roster-pagination-controls">
+            <PaginationItem>
+              <button
+                className="page-button"
+                aria-label={t('First page', '第一页')}
+                disabled={currentPage === 0}
+                onClick={() => setPage(0)}
+              >
+                {t('First', '首页')}
+              </button>
+            </PaginationItem>
+            <PaginationItem>
+              <button
+                className="page-button"
+                aria-label={t('Previous page', '上一页')}
+                disabled={currentPage === 0}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                {t('Previous', '上一页')}
+              </button>
+            </PaginationItem>
+            {paginationItems(currentPage + 1, pageCount).map((item, i) => (
+              <PaginationItem key={`${item}-${i}`}>
+                {item === 'ellipsis' ? (
+                  <span className="page-ellipsis" aria-hidden="true">
+                    …
+                  </span>
+                ) : (
+                  <button
+                    className="page-button"
+                    aria-current={item === currentPage + 1 ? 'page' : undefined}
+                    aria-label={t(`Page ${item}`, `第 ${item} 页`)}
+                    onClick={() => setPage(item - 1)}
+                  >
+                    {item}
+                  </button>
+                )}
+              </PaginationItem>
+            ))}
+            <PaginationItem>
+              <button
+                className="page-button"
+                aria-label={t('Next page', '下一页')}
+                disabled={currentPage + 1 >= pageCount}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                {t('Next', '下一页')}
+              </button>
+            </PaginationItem>
+            <PaginationItem>
+              <button
+                className="page-button"
+                aria-label={t('Last page', '最后一页')}
+                disabled={currentPage + 1 >= pageCount}
+                onClick={() => setPage(pageCount - 1)}
+              >
+                {t('Last', '末页')}
+              </button>
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+        <form
+          className="page-jump"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const target = Number(jumpPage);
+            if (
+              Number.isInteger(target) &&
+              target >= 1 &&
+              target <= pageCount
+            ) {
+              setPage(target - 1);
+              setJumpPage('');
+            }
+          }}
         >
-          {t('Previous', '上一页')}
-        </button>
-        <button
-          className="secondary"
-          disabled={currentPage + 1 >= pageCount}
-          onClick={() => setPage(currentPage + 1)}
-        >
-          {t('Next', '下一页')}
-        </button>
+          <label>
+            {t('Go to page', '跳转到页')}
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={pageCount}
+              step={1}
+              required
+              value={jumpPage}
+              placeholder={String(currentPage + 1)}
+              onChange={(e) => setJumpPage(e.target.value)}
+            />
+          </label>
+          <button className="secondary" disabled={!jumpPage}>
+            {t('Go', '跳转')}
+          </button>
+        </form>
       </div>
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent className="app-dialog">
@@ -337,20 +476,25 @@ export function UserManager({
           <DialogHeader>
             <DialogTitle>{confirm && names[confirm.operation]}</DialogTitle>
             <DialogDescription>
-              {confirm?.operation === 'admin'
+              {confirm?.operation === 'liftBookingPause'
                 ? t(
-                    'This grants full access to accounts, rosters, bookings and all settings. The account will be signed out so its permissions can refresh.',
-                    '将授予账号、名单、预约及全部设置的管理权限。该账号会退出登录以刷新权限。',
+                    'Only the selected students whose bookings are paused will have the restriction lifted. Their passwords and meeting records stay the same.',
+                    '仅解除所选学生的预约暂停限制，密码和预约记录保持不变。',
                   )
-                : confirm?.operation === 'resetPassword'
+                : confirm?.operation === 'admin'
                   ? t(
-                      'Current passwords will stop working and selected users will be signed out. New random passwords will be shown for download.',
-                      '当前密码将失效，所选用户会退出登录。新随机密码将显示并可下载。',
+                      'This grants full access to accounts, rosters, bookings and all settings. The account will be signed out so its permissions can refresh.',
+                      '将授予账号、名单、预约及全部设置的管理权限。该账号会退出登录以刷新权限。',
                     )
-                  : t(
-                      'The whole selection is checked before saving. Changing an admin to student or instructor revokes admin access. Role changes sign users out. The last admin must remain; accounts with meeting records or teaching assignments cannot be deleted.',
-                      '保存前会检查全部所选账号。将管理员设为学生或教师即撤销管理权限，修改角色后用户会退出登录。必须保留一位管理员，有预约记录或辅导安排的账号不可删除。',
-                    )}
+                  : confirm?.operation === 'resetPassword'
+                    ? t(
+                        'Current passwords will stop working and selected users will be signed out. New random passwords will be shown for download.',
+                        '当前密码将失效，所选用户会退出登录。新随机密码将显示并可下载。',
+                      )
+                    : t(
+                        'The whole selection is checked before saving. Changing an admin to student or instructor revokes admin access. Role changes sign users out. The last admin must remain; accounts with meeting records or teaching assignments cannot be deleted.',
+                        '保存前会检查全部所选账号。将管理员设为学生或教师即撤销管理权限，修改角色后用户会退出登录。必须保留一位管理员，有预约记录或辅导安排的账号不可删除。',
+                      )}
             </DialogDescription>
           </DialogHeader>
           <p>{confirm?.ids.join(', ')}</p>
