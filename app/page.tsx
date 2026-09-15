@@ -34,13 +34,8 @@ import {
   LockKeyhole,
   LoaderCircle,
 } from 'lucide-react';
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from '@/components/ui/select';
+import { AvailabilityCalendar } from '@/components/availability-calendar';
+import { Choice } from '@/components/choice';
 import {
   Dialog,
   DialogContent,
@@ -92,6 +87,8 @@ import {
   currentYear,
   parseCSV,
   clientId,
+  maxRosterBytes,
+  availabilityDays,
   profileError,
 } from '@/lib/model';
 import type {
@@ -116,40 +113,6 @@ type Data = {
   freshmanYear: number;
 };
 type T = (en: string, zh: string) => string;
-function Choice({
-  value,
-  onChange,
-  options,
-  label,
-  disabled = false,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <Select
-      value={value}
-      onValueChange={(v) => v !== null && onChange(String(v))}
-      disabled={disabled}
-    >
-      <SelectTrigger className="choice" aria-label={label}>
-        <SelectValue>
-          {options.find((o) => o.value === value)?.label || label}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((o) => (
-          <SelectItem value={o.value} key={o.value}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label>
@@ -244,8 +207,8 @@ const errorMessages: Record<string, [string, string]> = {
     '尝试次数过多，请在 15 分钟后重试。',
   ],
   profile_incomplete: [
-    'Enter both names and a valid phone number.',
-    '请填写中文姓名、英文姓名及有效的手机号码。',
+    'Enter both names. If a phone number is provided, check its format.',
+    '请填写中文姓名和英文姓名；如填写手机号码，请检查格式。',
   ],
   admin_class_required: [
     'Choose a valid administrative class.',
@@ -257,7 +220,7 @@ const errorMessages: Record<string, [string, string]> = {
   ],
   invalid_grade: [
     'Enter a valid entry year, no later than this year.',
-    '请输入有效的入学年份，不能晚于今年。',
+    '请输入有效的加入年份，不能晚于今年。',
   ],
   booking_conflict: [
     'This slot filled up, overlaps another booking, or you reached your active booking limit. Refresh and choose again.',
@@ -287,9 +250,17 @@ const errorMessages: Record<string, [string, string]> = {
     'Use the CSV template and check the columns and quotation marks.',
     '请使用 CSV 模板，并检查列数及引号。',
   ],
-  import_limit: [
-    'Import between 1 and 100 accounts at a time.',
-    '每次可导入 1 至 100 个账号。',
+  roster_too_large: [
+    'The import data exceeds 20 MB. Split this file into smaller files.',
+    '导入数据超过 20 MB，请拆分文件后导入。',
+  ],
+  last_admin: [
+    'At least one administrator must remain. Grant another account admin access first.',
+    '必须保留至少一位管理员，请先授予其他账号管理员权限。',
+  ],
+  protected_admin: [
+    'Revoke admin access before deleting or resetting this account.',
+    '删除账号或重置密码前，请先撤销其管理员权限。',
   ],
   assigned_instructor: [
     'Remove this instructor from availability windows before changing their role.',
@@ -1695,6 +1666,8 @@ export default function Home() {
               settings={settings}
               staff={data!.staff}
               slots={data!.slots}
+              bookings={data!.bookings}
+              now={data!.serverTime}
               t={t}
               busy={busy}
               error={
@@ -1750,7 +1723,8 @@ export default function Home() {
                       const file = e.target.files?.[0];
                       if (!file) return;
                       try {
-                        if (file.size > 200000) throw Error('import_limit');
+                        if (file.size > maxRosterBytes)
+                          throw Error('roster_too_large');
                         setImportRows(parseCSV(await file.text()));
                         setError('');
                       } catch (e) {
@@ -2336,8 +2310,8 @@ export default function Home() {
             </DialogTitle>
             <DialogDescription>
               {t(
-                `${importRows?.length || 0} accounts. Existing IDs will not be overwritten. Maximum 100 per import.`,
-                `${importRows?.length || 0} 个账号。不会覆盖已有账号，每次最多导入 100 个。`,
+                `${importRows?.length || 0} accounts. All rows will be imported; the first 50 are shown below. Existing IDs will not be overwritten.`,
+                `${importRows?.length || 0} 个账号。将导入全部数据，下方预览前 50 行；不会覆盖已有账号。`,
               )}
             </DialogDescription>
           </DialogHeader>
@@ -2352,7 +2326,7 @@ export default function Home() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {importRows?.map((r, i) => {
+                {importRows?.slice(0, 50).map((r, i) => {
                   const err =
                     (r.role || 'student') === 'student'
                       ? profileError(
@@ -2392,7 +2366,7 @@ export default function Home() {
           {errorBox()}
           <button
             className="primary"
-            disabled={busy || !importRows?.length || importRows.length > 100}
+            disabled={busy || !importRows?.length}
             onClick={async () => {
               const r = await act({ action: 'import', rows: importRows });
               if (r) {
@@ -2481,7 +2455,7 @@ function ProfileForm({
         <Field label={t('Institutional ID', '学号 / 工号')}>
           <input value={user.id} disabled />
         </Field>
-        <Field label={t('Entry year', '入学年份')}>
+        <Field label={t('Entry year', '加入年份')}>
           <input
             type="number"
             value={p.grade}
@@ -2549,11 +2523,10 @@ function ProfileForm({
             </Field>
           </>
         )}
-        <Field label={t('Phone number', '手机号码')}>
+        <Field label={t('Phone number · optional', '手机号码 · 选填')}>
           <input
             type="tel"
             value={p.phone}
-            required={user.role === 'student'}
             maxLength={24}
             onChange={(e) => set('phone', e.target.value)}
           />
@@ -2632,6 +2605,8 @@ function Schedule({
   settings,
   staff,
   slots,
+  bookings,
+  now,
   t,
   busy,
   error,
@@ -2640,13 +2615,17 @@ function Schedule({
   settings: Settings;
   staff: Data['staff'];
   slots: Slot[];
+  bookings: Booking[];
+  now: number;
   t: T;
   busy: boolean;
   error: string;
   onSave: (s: Settings) => Promise<any>;
 }) {
   const [editing, setEditing] = useState<TeachingWindow | null>(null),
-    [closed, setClosed] = useState(settings.closedDates.join('\n'));
+    [closed, setClosed] = useState(settings.closedDates.join('\n')),
+    [selectedDate, setSelectedDate] = useState(chinaDate(now));
+  const calendarDays = availabilityDays(settings, bookings, now);
   useEffect(
     () => setClosed(settings.closedDates.join('\n')),
     [settings.closedDates],
@@ -2660,8 +2639,8 @@ function Schedule({
       <PageHeading
         title={t('Make room for tutorials.', '安排好每一次交流。')}
         description={t(
-          'Set weekly teaching windows. Time slots are generated automatically.',
-          '设置每周辅导时间范围，系统将自动生成可预约时段。',
+          'See the next four weeks and select a date to manage its time slots.',
+          '一览未来四周的辅导安排，选择日期即可管理具体时段。',
         )}
       >
         <button
@@ -2690,67 +2669,85 @@ function Schedule({
           `${settings.meetingMinutes} 分钟辅导 · ${settings.breakMinutes} 分钟休息 · 开放未来 ${settings.horizonDays} 天`,
         )}
       </div>
-      <div className="schedule-grid">
-        {[1, 2, 3, 4, 5, 6, 0].map((day) => (
-          <section className="panel schedule-day" key={day}>
-            <div className="section-heading">
-              <h3>{days[day]}</h3>
-              <span className="count">
-                {settings.windows.filter((w) => w.day === day).length}
-              </span>
-            </div>
-            {settings.windows
-              .filter((w) => w.day === day)
-              .map((w) => (
-                <button
-                  className={`window-card ${!w.enabled ? 'disabled-window' : ''}`}
-                  key={w.id}
-                  onClick={() => setEditing(structuredClone(w))}
-                >
-                  <div className="row">
-                    <strong>
-                      {w.start}–{w.end}
-                    </strong>
-                    <Pencil size={14} />
-                  </div>
-                  <p>
-                    <MapPin size={14} />
-                    {w.location}
-                  </p>
-                  <p>
-                    <Users size={14} />
-                    {w.instructors
-                      .map((id) => staff.find((u) => u.id === id)?.name || id)
-                      .join(' / ') || t('Unassigned', '未安排教师')}
-                  </p>
-                  <small>
-                    {w.capacity} {t('seat(s) per slot', '个名额 / 时段')}
-                    {!w.enabled ? ' · ' + t('Paused', '已暂停') : ''}
-                  </small>
-                </button>
-              ))}
-            {!settings.windows.some((w) => w.day === day) && (
-              <p className="no-hours">
-                {t('No teaching hours', '暂无辅导安排')}
-              </p>
-            )}
-          </section>
-        ))}
-      </div>
+      <AvailabilityCalendar
+        days={calendarDays}
+        selectedDate={selectedDate}
+        onSelect={setSelectedDate}
+        staff={staff}
+        t={t}
+      />
+      <SlotManager
+        settings={settings}
+        slots={[
+          ...slots.filter((s) => !calendarDays.some((d) => d.date === s.date)),
+          ...calendarDays.flatMap((d) => d.slots),
+        ]}
+        date={selectedDate}
+        onDateChange={setSelectedDate}
+        staff={staff}
+        t={t}
+        busy={busy}
+        error={error}
+        onSave={onSave}
+      />
+      <details className="weekly-window-editor">
+        <summary>
+          {t('Weekly teaching windows', '每周辅导时间范围')}{' '}
+          <span className="count">{settings.windows.length}</span>
+        </summary>
+        <div className="schedule-grid">
+          {[1, 2, 3, 4, 5, 6, 0].map((day) => (
+            <section className="panel schedule-day" key={day}>
+              <div className="section-heading">
+                <h3>{days[day]}</h3>
+                <span className="count">
+                  {settings.windows.filter((w) => w.day === day).length}
+                </span>
+              </div>
+              {settings.windows
+                .filter((w) => w.day === day)
+                .map((w) => (
+                  <button
+                    className={`window-card ${!w.enabled ? 'disabled-window' : ''}`}
+                    key={w.id}
+                    onClick={() => setEditing(structuredClone(w))}
+                  >
+                    <div className="row">
+                      <strong>
+                        {w.start}–{w.end}
+                      </strong>
+                      <Pencil size={14} />
+                    </div>
+                    <p>
+                      <MapPin size={14} />
+                      {w.location}
+                    </p>
+                    <p>
+                      <Users size={14} />
+                      {w.instructors
+                        .map((id) => staff.find((u) => u.id === id)?.name || id)
+                        .join(' / ') || t('Unassigned', '未安排教师')}
+                    </p>
+                    <small>
+                      {w.capacity} {t('seat(s) per slot', '个名额 / 时段')}
+                      {!w.enabled ? ' · ' + t('Paused', '已暂停') : ''}
+                    </small>
+                  </button>
+                ))}
+              {!settings.windows.some((w) => w.day === day) && (
+                <p className="no-hours">
+                  {t('No teaching hours', '暂无辅导安排')}
+                </p>
+              )}
+            </section>
+          ))}
+        </div>
+      </details>
       <TimetableImport
         settings={settings}
         staff={staff}
         t={t}
         busy={busy}
-        onSave={onSave}
-      />
-      <SlotManager
-        settings={settings}
-        slots={slots}
-        staff={staff}
-        t={t}
-        busy={busy}
-        error={error}
         onSave={onSave}
       />
       <section className="panel exceptions-panel">

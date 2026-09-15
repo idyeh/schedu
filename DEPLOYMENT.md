@@ -142,3 +142,15 @@ docker compose down
 ```
 
 The `/api/health` endpoint checks database access and returns no student data. The container uses a non-root user, a read-only application filesystem, a writable data volume, bounded logs and no added Linux capabilities. Runtime secrets are supplied through `.env`, not baked into the image.
+
+
+## Updating account permissions and roster management
+
+After copying the updated source into the deployment directory, back up the database and rebuild the app:
+
+```sh
+docker compose exec app node deploy/backup.mjs
+docker compose up -d --build --wait app
+```
+
+Startup applies `0001_keep_last_admin.sql` automatically. It protects the final administrator against role removal and deletion; existing users and bookings are preserved. No new ports, services or environment variables are needed. CSV imports support 1,200 students and larger rosters without a row-count limit; if an external reverse proxy is used, allow request bodies up to 20 MB on `/api/app`.

@@ -8,6 +8,13 @@
       "when": 1788800300639,
       "tag": "0000_odd_karnak",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789481490266,
+      "tag": "0001_keep_last_admin",
+      "breakpoints": true
     }
   ]
 }

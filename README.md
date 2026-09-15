@@ -10,6 +10,7 @@ Bilingual university tutorial booking for students, instructors and administrato
 - Default duration: 10 minutes, with a 5-minute gap. A 18:30–20:05 window ends with a 20:00–20:10 slot excluded because it exceeds the window.
 - One active submitted/approved/in-progress booking per student by default. Drafts do not reserve a seat.
 - Cancelling a submitted or approved booking blocks new submissions for two weeks by default. Deleting a draft does not incur a penalty.
+- Phone numbers are optional, including roster imports. A supplied number must have a valid format. The shared year field is labelled “加入年份” in Chinese for every role.
 - Entry year determines freshman status using the current calendar year in China. Administrative class is always mandatory; teaching class is mandatory for freshmen.
 - Evaluation options default to 0 (absent), 30 (poor), 40 (satisfactory), 70 (excellent).
 - User preferences are saved on the device. Automatic theme follows the browser/system preference.
@@ -30,7 +31,8 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the self-hosted stack, setup, Mainland Ch
 
 ## Administration
 
-- **Accounts:** create or import accounts, search, edit profiles, change roles, reset passwords and delete unused non-admin accounts. Select up to 100 accounts for a bulk role change, password reset or deletion. A failed validation leaves the whole selection unchanged. Meeting records and instructor assignments prevent deletion; passwords are shown once for download after a reset.
-- **Schedule:** add, edit, pause or delete weekly teaching windows. The timetable CSV template accepts `day,instructors,start,end,location,capacity`; separate multiple instructor IDs with `;`. Review the preview before importing. Imports append windows and reject overlapping assignments or unknown instructors.
+- **Accounts:** create or import accounts, search, edit profiles, change roles, reset passwords and delete unused non-admin accounts. People & rosters uses the shared styled dropdowns and shows 50 accounts per page. Roster imports have no account-count limit (tested with 1,200 students); the 20 MB request limit remains, and the preview shows the first 50 rows while importing all rows atomically. Select up to 100 accounts for a bulk role change, password reset or deletion. A failed validation leaves the whole selection unchanged. Meeting records and instructor assignments prevent deletion; passwords are shown once for download after a reset.
+- **Admin access:** choose Administrator in an account’s role control to grant full access. Choose Student or Instructor to revoke it. Role changes sign the affected user out. A database guard prevents removing the last administrator, including concurrent or bulk revocations. To leave the administrator role, the sole admin must first grant admin access to another account.
+- **Schedule:** the default view is a dated calendar of the next 28 days, with instructors, locations, remaining seats, dates off and one-off changes. Select a date to manage its slots. Expand Weekly teaching windows to add, edit, pause or delete recurring windows. The timetable CSV template accepts `day,instructors,start,end,location,capacity`; separate multiple instructor IDs with `;`. Review the preview before importing. Imports append windows and reject overlapping assignments or unknown instructors.
 - **Individual slots:** choose a date to edit or close one occurrence, reopen it, or add a one-off slot. Weekly recurrence is unchanged. Dates off and the booking horizon still apply. Cancel active reservations before changing their time slots; staff cancellations do not penalise students.
 - Both languages and the current theme apply to these controls. Teaching-window creation also works on plain HTTP deployments.

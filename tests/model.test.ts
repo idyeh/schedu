@@ -9,6 +9,7 @@ import {
   parseCSV,
   timetableWindows,
   clientId,
+  availabilityDays,
 } from '../lib/model.ts';
 const monday = new Date('2026-09-07T08:00:00+08:00').getTime();
 const settings = {
@@ -174,4 +175,56 @@ test('HTTP-compatible identifiers and bilingual timetable import', () => {
     /invalid_csv/,
   );
   assert.throws(() => timetableWindows('id,name\n1,A'), /invalid_csv/);
+});
+
+test('phone may be omitted while class rules remain enforced', () => {
+  const p = {
+    grade: 2026,
+    adminClass: '26电H一',
+    teachingClass: 'Class 1',
+    chineseName: '张三',
+    englishName: 'San Zhang',
+    phone: '',
+  };
+  assert.equal(profileError(p, settings, monday), null);
+  assert.equal(
+    profileError({ ...p, phone: 'bad' }, settings, monday),
+    'profile_incomplete',
+  );
+  assert.equal(
+    profileError({ ...p, teachingClass: '' }, settings, monday),
+    'teaching_class_required',
+  );
+  assert.equal(
+    profileError({ ...p, grade: 2025, teachingClass: '' }, settings, monday),
+    null,
+  );
+});
+test('availability covers 28 dated days, closures, one-off edits and occupied seats', () => {
+  const slot = generateSlots(settings, monday)[0];
+  const preview = availabilityDays(
+    {
+      ...settings,
+      closedDates: ['2026-09-14'],
+      slotOverrides: [
+        {
+          ...slot,
+          id: 'extra-preview',
+          windowId: '',
+          date: '2026-09-08',
+          enabled: true,
+        },
+      ],
+    },
+    [{ slot, status: 'approved' }] as any,
+    monday,
+  );
+  assert.equal(preview.length, 28);
+  assert.equal(preview[0].date, '2026-09-07');
+  assert.equal(preview.at(-1)?.date, '2026-10-04');
+  assert.equal(preview[0].slots[0].remaining, 1);
+  assert.equal(preview[1].slots[0].id, 'extra-preview');
+  assert.equal(preview[1].bookable, false);
+  assert.equal(preview[7].closed, true);
+  assert.equal(preview[7].slots.length, 0);
 });

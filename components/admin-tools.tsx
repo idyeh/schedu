@@ -7,6 +7,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+import { Choice } from '@/components/choice';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
@@ -25,28 +26,6 @@ import {
 import type { User, Settings, Slot, SlotOverride, Window } from '@/lib/model';
 type T = (en: string, zh: string) => string;
 type Staff = { id: string; name: string }[];
-function Select({
-  label,
-  value,
-  onChange,
-  children,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  children: ReactNode;
-}) {
-  return (
-    <select
-      className="admin-select"
-      aria-label={label}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      {children}
-    </select>
-  );
-}
 function Download({
   name,
   text,
@@ -98,17 +77,23 @@ export function UserManager({
       ids: string[];
       operation: string;
     } | null>(null),
-    [editing, setEditing] = useState<User | null>(null);
+    [editing, setEditing] = useState<User | null>(null),
+    [page, setPage] = useState(0);
   const visible = users.filter((u) =>
     `${u.id} ${u.profile.chineseName} ${u.profile.englishName} ${u.profile.adminClass}`
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
-  const eligible = visible.filter((u) => u.role !== 'admin').map((u) => u.id);
+  const pageCount = Math.max(1, Math.ceil(visible.length / 50));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageUsers = visible.slice(currentPage * 50, (currentPage + 1) * 50);
+  const adminCount = users.filter((u) => u.role === 'admin').length;
+  const eligible = pageUsers.filter((u) => u.role !== 'admin').map((u) => u.id);
   const names: Record<string, string> = {
     resetPassword: t('Reset passwords', '重置密码'),
     student: t('Set role: student', '设为学生'),
     instructor: t('Set role: instructor', '设为教师'),
+    admin: t('Grant admin access', '授予管理员权限'),
     delete: t('Delete accounts', '删除账号'),
   };
   return (
@@ -123,7 +108,10 @@ export function UserManager({
           aria-label={t('Search accounts', '搜索账号')}
           placeholder={t('Search name, ID or class…', '搜索姓名、账号或班级…')}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setPage(0);
+          }}
         />
       </div>
       <div className="admin-toolbar">
@@ -133,17 +121,16 @@ export function UserManager({
             `已选 ${selected.length} 个（最多 100 个）`,
           )}
         </span>
-        <Select
+        <Choice
           label={t('Bulk action', '批量操作')}
           value={operation}
           onChange={setOperation}
-        >
-          {Object.entries(names).map(([id, name]) => (
-            <option value={id} key={id}>
-              {name}
-            </option>
-          ))}
-        </Select>
+          disabled={busy}
+          options={Object.entries(names).map(([value, label]) => ({
+            value,
+            label,
+          }))}
+        />
         <button
           className="secondary"
           disabled={busy || !selected.length || selected.length > 100}
@@ -181,7 +168,7 @@ export function UserManager({
             </TableHead>
             {[
               t('Name / ID', '姓名 / 账号'),
-              t('Class', '班级'),
+              t('Entry year / class', '加入年份 / 班级'),
               t('Role', '角色'),
               t('Account', '账号状态'),
               t('Actions', '操作'),
@@ -191,7 +178,7 @@ export function UserManager({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {visible.map((u) => (
+          {pageUsers.map((u) => (
             <TableRow key={u.id}>
               <TableCell>
                 {u.role !== 'admin' && (
@@ -227,25 +214,38 @@ export function UserManager({
                     </small>
                   </>
                 ) : (
-                  '—'
+                  u.profile.grade || '—'
                 )}
               </TableCell>
               <TableCell>
-                {u.role === 'admin' ? (
-                  t('Administrator', '管理员')
-                ) : (
-                  <Select
-                    label={t(`Role for ${u.id}`, `${u.id} 的角色`)}
-                    value={u.role}
-                    onChange={(role) =>
-                      setConfirm({ ids: [u.id], operation: role })
-                    }
-                  >
-                    <option value="student">{t('Student', '学生')}</option>
-                    <option value="instructor">
-                      {t('Instructor', '教师')}
-                    </option>
-                  </Select>
+                <Choice
+                  label={t(`Role for ${u.id}`, `${u.id} 的角色`)}
+                  value={u.role}
+                  disabled={busy}
+                  onChange={(role) =>
+                    setConfirm({ ids: [u.id], operation: role })
+                  }
+                  options={[
+                    {
+                      value: 'student',
+                      label: t('Student', '学生'),
+                      disabled: u.role === 'admin' && adminCount === 1,
+                    },
+                    {
+                      value: 'instructor',
+                      label: t('Instructor', '教师'),
+                      disabled: u.role === 'admin' && adminCount === 1,
+                    },
+                    { value: 'admin', label: t('Administrator', '管理员') },
+                  ]}
+                />
+                {u.role === 'admin' && adminCount === 1 && (
+                  <small className="table-sub">
+                    {t(
+                      'Last admin · grant another first',
+                      '唯一管理员 · 请先授权他人',
+                    )}
+                  </small>
                 )}
               </TableCell>
               <TableCell>
@@ -296,6 +296,28 @@ export function UserManager({
           )}
         </TableBody>
       </Table>
+      <div className="admin-toolbar people-pagination">
+        <span>
+          {t(
+            `${visible.length} accounts · Page ${currentPage + 1} of ${pageCount}`,
+            `${visible.length} 个账号 · 第 ${currentPage + 1} / ${pageCount} 页`,
+          )}
+        </span>
+        <button
+          className="secondary"
+          disabled={currentPage === 0}
+          onClick={() => setPage(currentPage - 1)}
+        >
+          {t('Previous', '上一页')}
+        </button>
+        <button
+          className="secondary"
+          disabled={currentPage + 1 >= pageCount}
+          onClick={() => setPage(currentPage + 1)}
+        >
+          {t('Next', '下一页')}
+        </button>
+      </div>
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent className="app-dialog">
           <DialogHeader>
@@ -315,15 +337,20 @@ export function UserManager({
           <DialogHeader>
             <DialogTitle>{confirm && names[confirm.operation]}</DialogTitle>
             <DialogDescription>
-              {confirm?.operation === 'resetPassword'
+              {confirm?.operation === 'admin'
                 ? t(
-                    'Current passwords will stop working and selected users will be signed out. New random passwords will be shown for download.',
-                    '当前密码将失效，所选用户会退出登录。新随机密码将显示并可下载。',
+                    'This grants full access to accounts, rosters, bookings and all settings. The account will be signed out so its permissions can refresh.',
+                    '将授予账号、名单、预约及全部设置的管理权限。该账号会退出登录以刷新权限。',
                   )
-                : t(
-                    'The whole selection is checked before saving. Role changes sign users out. Accounts with meeting records or teaching assignments cannot be deleted.',
-                    '保存前会检查全部所选账号，修改角色后用户会退出登录。有预约记录或辅导安排的账号不可删除。',
-                  )}
+                : confirm?.operation === 'resetPassword'
+                  ? t(
+                      'Current passwords will stop working and selected users will be signed out. New random passwords will be shown for download.',
+                      '当前密码将失效，所选用户会退出登录。新随机密码将显示并可下载。',
+                    )
+                  : t(
+                      'The whole selection is checked before saving. Changing an admin to student or instructor revokes admin access. Role changes sign users out. The last admin must remain; accounts with meeting records or teaching assignments cannot be deleted.',
+                      '保存前会检查全部所选账号。将管理员设为学生或教师即撤销管理权限，修改角色后用户会退出登录。必须保留一位管理员，有预约记录或辅导安排的账号不可删除。',
+                    )}
             </DialogDescription>
           </DialogHeader>
           <p>{confirm?.ids.join(', ')}</p>
@@ -525,6 +552,8 @@ export function TimetableImport({
 export function SlotManager({
   settings,
   slots,
+  date,
+  onDateChange,
   staff,
   t,
   busy,
@@ -533,14 +562,15 @@ export function SlotManager({
 }: {
   settings: Settings;
   slots: Slot[];
+  date: string;
+  onDateChange: (date: string) => void;
   staff: Staff;
   t: T;
   busy: boolean;
   error: string;
   onSave: (s: Settings) => Promise<unknown>;
 }) {
-  const [date, setDate] = useState(slots[0]?.date || chinaDate()),
-    [editing, setEditing] = useState<SlotOverride | null>(null),
+  const [editing, setEditing] = useState<SlotOverride | null>(null),
     [removing, setRemoving] = useState<SlotOverride | null>(null);
   const overrides = settings.slotOverrides || [];
   const listed: SlotOverride[] = [
@@ -591,7 +621,7 @@ export function SlotManager({
           <input
             type="date"
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={(e) => onDateChange(e.target.value)}
           />
         </label>
       </div>
@@ -687,7 +717,7 @@ export function SlotManager({
               onSubmit={async (e) => {
                 e.preventDefault();
                 if (await save({ ...editing, enabled: true })) {
-                  setDate(editing.date);
+                  onDateChange(editing.date);
                   setEditing(null);
                 }
               }}

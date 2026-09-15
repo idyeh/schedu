@@ -1,3 +1,4 @@
+export const maxRosterBytes = 20 * 1024 * 1024;
 export type Role = 'student' | 'instructor' | 'admin';
 export type Status =
   | 'draft'
@@ -232,7 +233,7 @@ export function profileError(
   if (
     !p.chineseName?.trim() ||
     !p.englishName?.trim() ||
-    !/^\+?[\d ()-]{7,24}$/.test(p.phone || '')
+    (!!p.phone?.trim() && !/^\+?[\d ()-]{7,24}$/.test(p.phone.trim()))
   )
     return 'profile_incomplete';
   return null;
@@ -466,6 +467,33 @@ export function timetableWindows(text: string): Window[] {
         .map((v) => v.trim())
         .filter(Boolean),
       enabled: true,
+    };
+  });
+}
+
+export function availabilityDays(
+  settings: Settings,
+  bookings: Booking[],
+  now: number,
+) {
+  const counts = new Map<string, number>();
+  for (const b of bookings)
+    if (activeStatuses.includes(b.status))
+      counts.set(b.slot.id, (counts.get(b.slot.id) || 0) + 1);
+  const slots = generateSlots({ ...settings, horizonDays: 28 }, now).map(
+    (s) => ({
+      ...s,
+      remaining: Math.max(0, s.capacity - (counts.get(s.id) || 0)),
+    }),
+  );
+  const start = Date.parse(chinaDate(now) + 'T00:00:00+08:00');
+  return Array.from({ length: 28 }, (_, i) => {
+    const date = chinaDate(start + i * 86400000);
+    return {
+      date,
+      slots: slots.filter((s) => s.date === date),
+      closed: settings.closedDates.includes(date),
+      bookable: i < settings.horizonDays,
     };
   });
 }

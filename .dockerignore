@@ -14,3 +14,4 @@ backups
 *.tar.gz
 tests
 VALIDATION.md
+raw_data

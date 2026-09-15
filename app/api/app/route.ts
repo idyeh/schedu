@@ -24,6 +24,7 @@ import {
   validateSettings,
   currentYear,
   defaultSettings,
+  maxRosterBytes,
 } from '@/lib/model';
 import type { User, Profile, Settings, Booking, Slot } from '@/lib/model';
 export const dynamic = 'force-dynamic';
@@ -161,7 +162,8 @@ export async function POST(req: Request) {
     if (!req.headers.get('content-type')?.includes('application/json'))
       fail('invalid_request');
     const raw = await req.text();
-    if (raw.length > 200000) fail('invalid_request');
+    if (new TextEncoder().encode(raw).byteLength > maxRosterBytes)
+      fail('roster_too_large');
     const b = JSON.parse(raw),
       db = database(),
       now = Date.now();
@@ -342,8 +344,7 @@ export async function POST(req: Request) {
     if (b.action === 'issue' || b.action === 'import') {
       requireAdmin(user);
       const rows = b.action === 'issue' ? [b.user] : b.rows;
-      if (!Array.isArray(rows) || !rows.length || rows.length > 100)
-        fail('import_limit');
+      if (!Array.isArray(rows) || !rows.length) fail('invalid_roster');
       const existing = await db.prepare('SELECT id FROM users').all();
       const ids = new Set(existing.results.map((u) => u.id));
       const checked = rows.map((r: any) => {
@@ -368,21 +369,26 @@ export async function POST(req: Request) {
           password: randomPassword(),
         };
       });
-      const statements = [];
-      for (const r of checked)
-        statements.push(
-          db
-            .prepare(
-              'INSERT INTO users(id,role,password,profile,first_login,blocked_until) VALUES(?,?,?,?,1,0)',
-            )
-            .bind(
-              r.id,
-              r.role,
-              await passwordHash(r.password),
-              JSON.stringify(r.profile),
-            ),
+      // Hash in small groups to keep large rosters responsive without weakening passwords.
+      const records = [];
+      for (let i = 0; i < checked.length; i += 8) {
+        records.push(
+          ...(await Promise.all(
+            checked.slice(i, i + 8).map(async (r) => ({
+              id: r.id,
+              role: r.role,
+              profile: r.profile,
+              password: await passwordHash(r.password),
+            })),
+          )),
         );
-      await db.batch(statements);
+      }
+      // One statement keeps the whole import atomic and avoids per-row query limits.
+      await db
+        .prepare(`INSERT INTO users(id,role,password,profile,first_login,blocked_until)
+        SELECT json_extract(value,'$.id'), json_extract(value,'$.role'), json_extract(value,'$.password'), json_extract(value,'$.profile'), 1, 0 FROM json_each(?)`)
+        .bind(JSON.stringify(records))
+        .run();
       return reply({
         ok: true,
         credentials: checked.map((r) => ({ id: r.id, password: r.password })),
@@ -407,6 +413,11 @@ export async function POST(req: Request) {
         .run();
       return reply({ ok: true });
     }
+    if (b.action === 'role') {
+      b.action = 'bulkUsers';
+      b.ids = [b.id];
+      b.operation = b.role;
+    }
     if (b.action === 'bulkUsers') {
       requireAdmin(user);
       if (
@@ -415,7 +426,7 @@ export async function POST(req: Request) {
         b.ids.length > 100 ||
         new Set(b.ids).size !== b.ids.length ||
         b.ids.some((id: unknown) => !validId(id)) ||
-        !['delete', 'resetPassword', 'student', 'instructor'].includes(
+        !['delete', 'resetPassword', 'student', 'instructor', 'admin'].includes(
           b.operation,
         )
       )
@@ -424,10 +435,16 @@ export async function POST(req: Request) {
         credentials = [];
       for (const id of b.ids) {
         const target = await db
-          .prepare("SELECT * FROM users WHERE id=? AND role!='admin'")
+          .prepare('SELECT * FROM users WHERE id=?')
           .bind(id)
           .first();
         if (!target) fail('forbidden');
+        if (
+          target.role === 'admin' &&
+          ['delete', 'resetPassword'].includes(b.operation)
+        )
+          fail('protected_admin');
+        if (target.role === b.operation) continue;
         if (b.operation === 'delete' || b.operation === 'student') {
           if (
             [...settings.windows, ...(settings.slotOverrides || [])].some((w) =>
@@ -485,36 +502,11 @@ export async function POST(req: Request) {
               .bind(b.operation, id),
           );
       }
-      await db.batch(statements);
+      if (statements.length) await db.batch(statements);
       return reply({
         ok: true,
         ...(credentials.length ? { credentials } : {}),
       });
-    }
-    if (b.action === 'role') {
-      requireAdmin(user);
-      if (!['student', 'instructor'].includes(b.role)) fail('forbidden');
-      if (
-        [...settings.windows, ...(settings.slotOverrides || [])].some((w) =>
-          w.instructors.includes(b.id),
-        ) &&
-        b.role === 'student'
-      )
-        fail('assigned_instructor');
-      const active = await db
-        .prepare(
-          "SELECT count(*) as n FROM bookings WHERE student_id=? AND status IN ('submitted','approved','in_progress')",
-        )
-        .bind(b.id)
-        .first<{ n: number }>();
-      if (active!.n > 0) fail('active_bookings');
-      const result = await db
-        .prepare("UPDATE users SET role=? WHERE id=? AND role!='admin'")
-        .bind(b.role, b.id)
-        .run();
-      if (result.meta.changes !== 1) fail('forbidden');
-      await db.prepare('DELETE FROM sessions WHERE user_id=?').bind(b.id).run();
-      return reply({ ok: true });
     }
     if (b.action === 'resetPassword') {
       requireAdmin(user);
@@ -747,7 +739,12 @@ export async function POST(req: Request) {
     }
     fail('invalid_request');
   } catch (e) {
-    const message = e instanceof Error ? e.message : 'invalid_request';
+    const detail = e instanceof Error ? e.message : 'invalid_request';
+    const message = detail.includes('last_admin')
+      ? 'last_admin'
+      : detail.includes('UNIQUE constraint failed: users.id')
+        ? 'invalid_roster'
+        : detail;
     const known = [
       'invalid_settings',
       'booked_slot_locked',
@@ -766,7 +763,9 @@ export async function POST(req: Request) {
       'unauthorised',
       'password_length',
       'invalid_instructor',
-      'import_limit',
+      'last_admin',
+      'protected_admin',
+      'roster_too_large',
       'invalid_roster',
       'assigned_instructor',
       'active_bookings',

@@ -14,12 +14,15 @@ else:
     DB=DBS[0]
 with sqlite3.connect(DB) as db:
     if NODE:
+        db.execute('DROP TRIGGER IF EXISTS keep_last_admin_role')
+        db.execute('DROP TRIGGER IF EXISTS keep_last_admin_account')
         for table in ['sessions','bookings','users','settings','attempts']:
             db.execute('DELETE FROM '+table)
     else:
         for table in ['sessions','bookings','users','settings','attempts']:
             db.execute('DROP TABLE IF EXISTS '+table)
         db.executescript(Path('drizzle/0000_odd_karnak.sql').read_text())
+    db.executescript(Path('drizzle/0001_keep_last_admin.sql').read_text())
 SETUP_TOKEN = os.environ.get('SCHEDU_SETUP_TOKEN','')
 class Client:
     def __init__(self):
@@ -28,7 +31,7 @@ class Client:
     def call(self,body=None,origin=BASE):
         req=urllib.request.Request(BASE+'/api/app', data=json.dumps(body).encode() if body is not None else None, headers={'Content-Type':'application/json','Origin':origin})
         try:
-            with self.opener.open(req,timeout=30) as r:return r.status,json.load(r)
+            with self.opener.open(req,timeout=120) as r:return r.status,json.load(r)
         except urllib.error.HTTPError as e:
             with e:return e.code,json.load(e)
     def ok(self,body=None):
@@ -121,7 +124,7 @@ class Flows(unittest.TestCase):
         valid=[{'id':'roster1','role':'student',**profile()},{'id':'roster2','role':'student',**profile(fresh=False)}]
         self.assertEqual(len(admin.ok({'action':'import','rows':valid})['credentials']),2)
         admin.ok({'action':'role','id':'roster1','role':'instructor'})
-        self.assertEqual(admin.call({'action':'role','id':'testadmin','role':'student'})[0],403)
+        self.assertEqual(admin.call({'action':'role','id':'testadmin','role':'student'})[1]['error'],'last_admin')
         self.assertEqual(admin.call({'action':'role','id':'teacher1','role':'student'})[1]['error'],'assigned_instructor')
         stale=Client();stale.ok({'action':'login','id':'student1','password':apass})
         a.ok({'action':'password','current':apass,'password':'a-new-secure-password'})
@@ -139,7 +142,7 @@ class Flows(unittest.TestCase):
         self.assertEqual(one.ok()['user']['profile'],updated)
         self.assertEqual(admin.call({'action':'bulkUsers','ids':['bulk1','student1'],'operation':'delete'})[1]['error'],'user_has_history')
         self.assertIsNotNone(one.ok()['user'])
-        self.assertEqual(admin.call({'action':'bulkUsers','ids':['bulk1','testadmin'],'operation':'instructor'})[0],403)
+        self.assertEqual(admin.call({'action':'bulkUsers','ids':['bulk1','testadmin'],'operation':'instructor'})[1]['error'],'last_admin')
         self.assertEqual(one.ok()['user']['role'],'student')
         admin.ok({'action':'bulkUsers','ids':['bulk1','bulk2'],'operation':'instructor'})
         self.assertIsNone(one.ok()['user'])
@@ -181,5 +184,50 @@ class Flows(unittest.TestCase):
         cfg['windows']=[]
         admin.ok({'action':'settings','settings':cfg})
         self.assertEqual(student.ok()['slots'],[])
+
+    def test_08_admin_grant_revoke_and_last_admin_race(self):
+        second,password=issue('admincandidate','instructor')
+        self.assertEqual(a.call({'action':'role','id':'student1','role':'admin'})[0],403)
+        self.assertEqual(admin.call({'action':'bulkUsers','ids':['testadmin'],'operation':'delete'})[1]['error'],'protected_admin')
+        admin.ok({'action':'role','id':'admincandidate','role':'admin'})
+        self.assertIsNone(second.ok()['user'])
+        second.ok({'action':'login','id':'admincandidate','password':password})
+        self.assertEqual(second.ok()['user']['role'],'admin')
+        self.assertTrue(second.ok()['users'])
+        # Even a bulk request that removes every admin must roll back in full.
+        self.assertEqual(admin.call({'action':'bulkUsers','ids':['admincandidate','testadmin'],'operation':'instructor'})[1]['error'],'last_admin')
+        self.assertEqual(second.ok()['user']['role'],'admin')
+        with concurrent.futures.ThreadPoolExecutor(2) as pool:
+            responses=list(pool.map(lambda pair:pair[0].call({'action':'role','id':pair[1],'role':'instructor'}),[(admin,'testadmin'),(second,'admincandidate')]))
+        self.assertEqual(sorted(r[0] for r in responses),[200,400])
+        survivor=second if responses[0][0]==200 else admin
+        self.assertEqual(len([u for u in survivor.ok()['users'] if u['role']=='admin']),1)
+        if survivor is second:
+            second.ok({'action':'role','id':'testadmin','role':'admin'})
+            admin.ok({'action':'login','id':'testadmin','password':'test-passphrase-2026'})
+            admin.ok({'action':'role','id':'admincandidate','role':'instructor'})
+        self.assertEqual(admin.ok()['user']['role'],'admin')
+        self.assertIsNone(second.ok()['user'])
+
+    def test_09_large_roster_and_optional_phone(self):
+        rows=[{'id':f'large{i:04d}','role':'student',**profile(fresh=i%2==0)} for i in range(1200)]
+        for row in rows:row.pop('phone')
+        before=len(admin.ok()['users'])
+        invalid=[*rows,dict(rows[0])]
+        self.assertEqual(admin.call({'action':'import','rows':invalid})[1]['error'],'invalid_roster')
+        self.assertEqual(len(admin.ok()['users']),before)
+        result=admin.ok({'action':'import','rows':rows})
+        self.assertEqual(len(result['credentials']),1200)
+        self.assertEqual(len(admin.ok()['users']),before+1200)
+        credential=result['credentials'][-1];student=Client()
+        student.ok({'action':'login','id':credential['id'],'password':credential['password']})
+        self.assertEqual(student.ok()['user']['profile']['phone'],'')
+        p=profile(fresh=False);p['phone']=''
+        student.ok({'action':'profile','profile':p})
+        p['phone']='invalid';self.assertEqual(student.call({'action':'profile','profile':p})[1]['error'],'profile_incomplete')
+        self.assertNotIn('password',json.dumps(admin.ok()['users']))
+        cfg=admin.ok()['settings'];cfg['windows']=[{'id':'optional-phone-window','day':day,'start':'18:30','end':'20:05','location':'B201','instructors':['teacher1'],'capacity':1,'enabled':True}]
+        admin.ok({'action':'settings','settings':cfg})
+        student.ok({'action':'book','slotId':student.ok()['slots'][0]['id']})
 
 if __name__=='__main__':unittest.main(verbosity=2)
