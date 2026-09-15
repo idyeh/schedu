@@ -25,7 +25,7 @@ test('SQLite applies migrations once and preserves records across reopen', async
     assert.equal(
       (await db.prepare('SELECT count(*) AS n FROM schedu_migrations').first())
         ?.n,
-      2,
+      3,
     );
   } finally {
     db.close();

@@ -19,23 +19,24 @@ with sqlite3.connect(DB) as db:
         for table in ['sessions','bookings','users','settings','attempts']:
             db.execute('DELETE FROM '+table)
     else:
-        for table in ['sessions','bookings','users','settings','attempts']:
+        for table in ['sessions','bookings','users','settings','attempts','app_state']:
             db.execute('DROP TABLE IF EXISTS '+table)
         db.executescript(Path('drizzle/0000_odd_karnak.sql').read_text())
+        db.executescript(Path('drizzle/0002_migration_packages.sql').read_text())
     db.executescript(Path('drizzle/0001_keep_last_admin.sql').read_text())
 SETUP_TOKEN = os.environ.get('SCHEDU_SETUP_TOKEN','')
 class Client:
     def __init__(self):
         self.jar=http.cookiejar.CookieJar()
         self.opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPCookieProcessor(self.jar))
-    def call(self,body=None,origin=BASE):
-        req=urllib.request.Request(BASE+'/api/app', data=json.dumps(body).encode() if body is not None else None, headers={'Content-Type':'application/json','Origin':origin})
+    def call(self,body=None,origin=BASE,path='/api/app'):
+        req=urllib.request.Request(BASE+path, data=json.dumps(body).encode() if body is not None else None, headers={'Content-Type':'application/json','Origin':origin})
         try:
             with self.opener.open(req,timeout=120) as r:return r.status,json.load(r)
         except urllib.error.HTTPError as e:
             with e:return e.code,json.load(e)
-    def ok(self,body=None):
-        code,data=self.call(body)
+    def ok(self,body=None,**kw):
+        code,data=self.call(body,**kw)
         assert code==200,(body.get('action') if body else 'GET',code,data)
         return data
 admin=Client(); anon=Client()
@@ -367,5 +368,57 @@ class Flows(unittest.TestCase):
             self.assertEqual(deleted[1]['removed'],1)
             self.assertFalse(exists)
         self.assertEqual(student.ok()['user']['blockedUntil'],0)
+
+    def test_15_full_export_restore_and_reset_gate(self):
+        path='/api/migration'
+        student,password=issue('migration-login',fresh=False)
+        rows=[{'id':f'migrate{i:04d}','role':'student',**profile(fresh=False)} for i in range(1200)]
+        for row in rows:row['phone']=''
+        admin.ok({'action':'import','rows':rows})
+        with sqlite3.connect(DB) as db:db.execute("UPDATE users SET blocked_until=? WHERE id='migration-login'",(int(now.timestamp()*1000)+86400000,))
+        before=admin.ok();student_before=student.ok()['user']
+        self.assertFalse(before['migration']['ready'])
+        self.assertEqual(anon.call({'action':'export','currentPassword':'test-passphrase-2026'},path=path)[0],401)
+        self.assertEqual(student.call({'action':'export','currentPassword':password},path=path)[0],403)
+        self.assertEqual(admin.call({'action':'export','currentPassword':'wrong'},path=path)[1]['error'],'incorrect_current_password')
+        self.assertEqual(admin.call({'action':'export','currentPassword':'test-passphrase-2026'},origin='https://evil.example',path=path)[0],403)
+        pkg=admin.ok({'action':'export','currentPassword':'test-passphrase-2026'},path=path)
+        self.assertGreaterEqual(len(pkg['data']['users']),1200)
+        self.assertNotIn('sessions',pkg['data']);self.assertNotIn('attempts',pkg['data'])
+        self.assertEqual(pkg['data']['settings'],before['settings'])
+        self.assertEqual(len(pkg['data']['bookings']),len(before['bookings']))
+        self.assertTrue(all(len(user['password'])==97 for user in pkg['data']['users']))
+        inspected=admin.ok({'action':'inspect','package':pkg},path=path)
+        self.assertEqual(inspected['summary']['users'],len(before['users']))
+        self.assertFalse(inspected['reset']['ready'])
+        restore={'action':'restore','package':pkg,'currentPassword':'test-passphrase-2026','confirmation':'RESTORE SchedU'}
+        self.assertEqual(admin.call(restore,path=path)[1]['error'],'restore_requires_reset')
+        admin.ok({'action':'resetData','currentPassword':'test-passphrase-2026','confirmation':'RESET SchedU'})
+        self.assertTrue(admin.ok()['migration']['ready'])
+        self.assertEqual(admin.call({**restore,'confirmation':'RESTORE'},path=path)[1]['error'],'restore_confirmation_required')
+        self.assertEqual(admin.call({**restore,'currentPassword':'wrong'},path=path)[1]['error'],'incorrect_current_password')
+        corrupt=json.loads(json.dumps(pkg));corrupt['data']['users'][0]['blocked_until']+=1
+        self.assertEqual(admin.call({'action':'inspect','package':corrupt},path=path)[1]['error'],'export_checksum_mismatch')
+        self.assertEqual(admin.call({**restore,'package':corrupt},path=path)[1]['error'],'export_checksum_mismatch')
+        self.assertTrue(admin.ok()['migration']['ready'])
+        self.assertEqual(admin.call({'action':'inspect','package':{**pkg,'version':2}},path=path)[1]['error'],'unsupported_export_version')
+        # Saving unchanged defaults still exits the explicit reset state.
+        admin.ok({'action':'settings','settings':admin.ok()['settings']})
+        self.assertFalse(admin.ok()['migration']['ready'])
+        self.assertEqual(admin.call(restore,path=path)[1]['error'],'restore_requires_reset')
+        admin.ok({'action':'resetData','currentPassword':'test-passphrase-2026','confirmation':'RESET SchedU'})
+        self.assertEqual(admin.ok(restore,path=path)['summary']['users'],len(before['users']))
+        self.assertIsNone(admin.ok()['user']);self.assertIsNone(student.ok()['user'])
+        with sqlite3.connect(DB) as db:self.assertEqual(db.execute('SELECT count(*) FROM sessions').fetchone()[0],0)
+        admin.ok({'action':'login','id':'testadmin','password':'test-passphrase-2026'})
+        after=admin.ok()
+        self.assertEqual(after['users'],before['users'])
+        self.assertEqual(after['bookings'],before['bookings'])
+        self.assertEqual(after['settings'],before['settings'])
+        self.assertFalse(after['migration']['ready'])
+        student.ok({'action':'login','id':'migration-login','password':password})
+        self.assertEqual(student.ok()['user'],student_before)
+        self.assertEqual(admin.call(restore,path=path)[1]['error'],'restore_requires_reset')
+        self.assertFalse(anon.ok()['needsSetup'])
 
 if __name__=='__main__':unittest.main(verbosity=2)

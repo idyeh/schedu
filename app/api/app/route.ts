@@ -32,6 +32,7 @@ import {
   validDate,
 } from '@/lib/model';
 import type { User, Profile, Settings, Booking, Slot } from '@/lib/model';
+import { migrationResetStatus } from '@/lib/migration-store';
 export const dynamic = 'force-dynamic';
 const reply = (
   body: unknown,
@@ -150,6 +151,8 @@ async function state(req: Request) {
     slots,
     serverTime: Date.now(),
     freshmanYear: currentYear(),
+    migration:
+      user.role === 'admin' ? await migrationResetStatus(db) : undefined,
   };
 }
 export async function GET(req: Request) {
@@ -524,6 +527,11 @@ export async function POST(req: Request) {
         db
           .prepare(`UPDATE users SET blocked_until=0 WHERE ${allowed}`)
           .bind(user.id, row.password),
+        db
+          .prepare(
+            `UPDATE app_state SET restore_ready=1,reset_at=?,restore_token='' WHERE id=1 AND ${allowed}`,
+          )
+          .bind(now, user.id, row.password),
       ]);
       if (!result[0].meta.changes) fail('forbidden');
       return reply({ ok: true });

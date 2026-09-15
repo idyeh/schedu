@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { AvailabilityCalendar } from '@/components/availability-calendar';
 import { DataReset } from '@/components/data-reset';
+import { DataMigration } from '@/components/data-migration';
 import { Choice } from '@/components/choice';
 import {
   Dialog,
@@ -109,6 +110,7 @@ import type {
 type Data = {
   user: User | null;
   needsSetup?: boolean;
+  migration?: { ready: boolean; resetAt: number | null };
   requiresSetupToken?: boolean;
   defaults?: { language: string; theme: string };
   settings: Settings;
@@ -1729,6 +1731,14 @@ export default function Home() {
                 t={t}
                 busy={busy}
                 onSave={(s) => act({ action: 'settings', settings: s })}
+              />
+              <DataMigration
+                reset={data!.migration || { ready: false, resetAt: null }}
+                t={t}
+                busy={busy}
+                onWorkingChange={setBusy}
+                onRefresh={reload}
+                onRestored={reload}
               />
               <DataReset
                 users={data!.users}

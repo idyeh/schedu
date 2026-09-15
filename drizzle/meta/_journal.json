@@ -15,6 +15,13 @@
       "when": 1789481490266,
       "tag": "0001_keep_last_admin",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789501872492,
+      "tag": "0002_migration_packages",
+      "breakpoints": true
     }
   ]
 }

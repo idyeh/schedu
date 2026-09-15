@@ -18,6 +18,12 @@ export const settings = sqliteTable('settings', {
   id: integer('id').primaryKey(),
   value: text('value').notNull(),
 });
+export const appState = sqliteTable('app_state', {
+  id: integer('id').primaryKey(),
+  restoreReady: integer('restore_ready').notNull().default(0),
+  resetAt: integer('reset_at'),
+  restoreToken: text('restore_token').notNull().default(''),
+});
 export const sessions = sqliteTable(
   'sessions',
   {

@@ -1545,7 +1545,8 @@ textarea:focus {
   font-weight: 500;
 }
 .settings-form,
-.data-reset-panel {
+.data-reset-panel,
+.data-migration-panel {
   width: 100%;
   max-width: 950px;
 }
@@ -2330,4 +2331,34 @@ textarea:focus {
   .calendar-navigation label {
     width: 100%;
   }
+}
+
+.data-migration-panel {
+  margin-top: 28px;
+  padding: 24px;
+}
+.data-migration-panel > p {
+  margin: 14px 0;
+}
+.migration-ready {
+  color: var(--primary);
+  font-weight: 600;
+}
+.migration-summary {
+  display: grid;
+  gap: 12px;
+  margin: 8px 0;
+}
+.migration-summary > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+.migration-summary dt {
+  color: var(--muted-foreground);
+}
+.migration-summary dd {
+  text-align: right;
+  overflow-wrap: anywhere;
+  max-width: 60%;
 }

@@ -45,7 +45,7 @@ server {
     server_name tutorials.your-institute.edu.cn;
     ssl_certificate /etc/nginx/certs/fullchain.pem;
     ssl_certificate_key /etc/nginx/certs/privkey.pem;
-    client_max_body_size 256k;
+    client_max_body_size 110m;
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $http_host;
@@ -55,6 +55,8 @@ server {
 ```
 
 Use the institution's certificates. SchedU does not contact an external certificate service or trust arbitrary forwarded headers for authentication.
+
+The proxy allowance covers a migration package plus its request envelope. SchedU independently limits migration packages to 100 MB and ordinary app requests, including roster imports, to 20 MB.
 
 ## Mainland China and offline delivery
 
@@ -131,6 +133,21 @@ The in-volume backup is overwritten each run. Store dated copies outside the hos
 To restore a backup, stop the app, replace `schedu.sqlite` in the volume with the backup, remove old `schedu.sqlite-wal` and `schedu.sqlite-shm`, ensure the restored file belongs to UID/GID 1000, then start the app. Perform this only against the intended deployment; restoring replaces its current data.
 
 Before an update, take a backup. Then rebuild/load the new image and run `docker compose up -d`. Keep the backup and previous image together if a rollback is needed.
+
+## Moving to another server with an export package
+
+Administrators can use **Configuration → Export & restore** without direct database access. The JSON package includes all accounts and password hashes, profiles, booking restrictions, every meeting status, feedback and history, and all configuration (including semesters, classrooms, teaching windows and individual slot changes). It has a format version and an integrity checksum. Keep it private: it is not encrypted.
+
+1. Update both installations to this version of SchedU or later. The new `0002_migration_packages.sql` migration runs automatically and preserves existing records. No new service, port or environment variable is required.
+2. On the source server, open **Export full dataset**, enter the current administrator password and save the package. Each export is a consistent snapshot. For the final migration, stop users making changes on the source before exporting, then keep it out of use until the destination is verified.
+3. Deploy the destination and set its own `.env`, including `SCHEDU_ORIGIN` for its new public URL and the appropriate port/bind address. Create a temporary administrator through first-time setup if this is a new installation. Environment settings and the setup token are not in the package.
+4. On the destination, use **Reset app data**. This clears existing app data while retaining the destination's administrators so they can perform the restoration. Reset is required even for a newly set-up installation. Do not edit accounts or configuration afterwards; any business-data change invalidates the reset state and requires another reset.
+5. Choose the exported JSON file. Review the record counts and the administrator IDs that will be available after restoration. Enter `RESTORE SchedU` and the current **destination** administrator password, then select **Replace data and restore**.
+6. Sign in using an administrator ID and its password from the **source** system. Verify the roster, settings and meetings, then direct users to the new URL.
+
+Restore replaces the complete dataset in one transaction; incremental restoration and merging are not supported. All destination administrator accounts are replaced by those in the package. Existing source passwords, first-login flags and booking pauses are preserved. Login sessions and temporary login-attempt records are excluded; all users must sign in again. A successful restore leaves the reset state, so another restoration requires another reset. Invalid packages or failed database writes leave the destination data unchanged.
+
+Exports and uploaded packages support up to 100 MB, without a roster row-count limit. If a reverse proxy is used, allow at least 101 MB for `/api/migration` (the example above uses 110 MB). For larger datasets, use the SQLite backup-and-replacement procedure above while the destination is stopped; that is a separate operator-level procedure, not an incremental import.
 
 ## Operation
 
