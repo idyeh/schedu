@@ -67,12 +67,18 @@ export function safeBooking(row: any): Booking {
   };
 }
 export async function getSettings(): Promise<Settings> {
+  return (await getSettingsSnapshot()).settings;
+}
+export async function getSettingsSnapshot() {
   const row = await database()
     .prepare('SELECT value FROM settings WHERE id=1')
     .first<{ value: string }>();
-  return row
-    ? normaliseSettings(JSON.parse(row.value))
-    : structuredClone(defaultSettings);
+  return {
+    raw: row?.value ?? null,
+    settings: row
+      ? normaliseSettings(JSON.parse(row.value))
+      : structuredClone(defaultSettings),
+  };
 }
 export async function getUser(req: Request): Promise<User | null> {
   const token = req.headers

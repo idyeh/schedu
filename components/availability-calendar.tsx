@@ -27,13 +27,13 @@ export function AvailabilityCalendar({
   return (
     <section
       className="panel availability-calendar"
-      aria-label={t('Next 28 days of availability', '未来 28 天的辅导安排')}
+      aria-label={t('Availability calendar', '辅导日历')}
     >
       <div className="section-heading">
         <div>
           <h3>
             <CalendarDays size={19} />
-            {t('Next 28 days', '未来 28 天')}
+            {t('Four-week calendar', '四周日历')}
           </h3>
           <p>
             {display(days[0].date, { day: 'numeric', month: 'short' })} –{' '}
@@ -64,7 +64,7 @@ export function AvailabilityCalendar({
             aria-hidden="true"
           />
         ))}
-        {days.map((day, i) => {
+        {days.map((day) => {
           const groups = new Map<
             string,
             {
@@ -89,7 +89,9 @@ export function AvailabilityCalendar({
                 instructors: new Set(slot.instructors),
               });
           }
-          const remaining = day.slots.reduce((n, s) => n + s.remaining, 0);
+          const remaining = day.past
+            ? 0
+            : day.slots.reduce((n, s) => n + s.remaining, 0);
           return (
             <button
               type="button"
@@ -104,7 +106,7 @@ export function AvailabilityCalendar({
                 <span className="availability-mobile-weekday">
                   {display(day.date, { weekday: 'short' })}
                 </span>
-                {i === 0 ? (
+                {day.today ? (
                   <small>{t('Today', '今天')}</small>
                 ) : day.date.endsWith('-01') ? (
                   <small>{display(day.date, { month: 'short' })}</small>
@@ -119,9 +121,14 @@ export function AvailabilityCalendar({
                   <span
                     className={`availability-count ${remaining === 0 ? 'is-full' : ''}`}
                   >
-                    {remaining > 0
-                      ? t(`${remaining} seats left`, `剩余 ${remaining} 个名额`)
-                      : t('Fully booked', '已约满')}
+                    {day.past
+                      ? t('Past sessions', '已过去的辅导')
+                      : remaining > 0
+                        ? t(
+                            `${remaining} seats left`,
+                            `剩余 ${remaining} 个名额`,
+                          )
+                        : t('Fully booked', '已约满')}
                   </span>
                   <span className="availability-events">
                     {Array.from(groups.entries()).map(([id, g]) => (
@@ -148,7 +155,9 @@ export function AvailabilityCalendar({
                   </span>
                   {!day.bookable && (
                     <small className="availability-empty">
-                      {t('Bookings not open yet', '尚未开放预约')}
+                      {day.past
+                        ? t('Past date', '已过去的日期')
+                        : t('Outside booking horizon', '不在预约开放期内')}
                     </small>
                   )}
                 </>
@@ -160,13 +169,16 @@ export function AvailabilityCalendar({
             </button>
           );
         })}
-        {Array.from({ length: (7 - ((offset + 28) % 7)) % 7 }, (_, i) => (
-          <div
-            className="availability-padding"
-            key={`end-${i}`}
-            aria-hidden="true"
-          />
-        ))}
+        {Array.from(
+          { length: (7 - ((offset + days.length) % 7)) % 7 },
+          (_, i) => (
+            <div
+              className="availability-padding"
+              key={`end-${i}`}
+              aria-hidden="true"
+            />
+          ),
+        )}
       </div>
       <p className="footnote">
         {t(

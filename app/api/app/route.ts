@@ -7,6 +7,7 @@ import {
 import {
   database,
   getSettings,
+  getSettingsSnapshot,
   getUser,
   safeUser,
   safeBooking,
@@ -25,6 +26,10 @@ import {
   currentYear,
   defaultSettings,
   maxRosterBytes,
+  slotsInRange,
+  chinaDate,
+  addDays,
+  validDate,
 } from '@/lib/model';
 import type { User, Profile, Settings, Booking, Slot } from '@/lib/model';
 export const dynamic = 'force-dynamic';
@@ -223,7 +228,8 @@ export async function POST(req: Request) {
     }
     const user = await getUser(req);
     if (!user) fail('unauthorised');
-    const settings = await getSettings();
+    const settingsSnapshot = await getSettingsSnapshot();
+    const settings = settingsSnapshot.settings;
     if (b.action === 'logout') {
       const token = req.headers
         .get('cookie')
@@ -302,17 +308,13 @@ export async function POST(req: Request) {
         )
         .bind(now)
         .all();
+      const from = addDays(chinaDate(now), -1);
+      const to = addDays(from, 366);
       const previous = new Map(
-        generateSlots(
-          { ...settings, horizonDays: settings.horizonDays + 2 },
-          now - 86400000,
-        ).map((slot) => [slot.id, slot]),
+        slotsInRange(settings, from, to).map((slot) => [slot.id, slot]),
       );
       const next = new Map(
-        generateSlots(
-          { ...s, horizonDays: s.horizonDays + 2 },
-          now - 86400000,
-        ).map((slot) => [slot.id, slot]),
+        slotsInRange(s, from, to).map((slot) => [slot.id, slot]),
       );
       const details = (slot: Slot | undefined) =>
         slot &&
@@ -333,13 +335,95 @@ export async function POST(req: Request) {
         )
           fail('booked_slot_locked');
       }
-      await db
-        .prepare(
-          'INSERT INTO settings(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value',
+      const changed = [...previous.values()]
+        .filter((slot) => details(slot) !== details(next.get(slot.id)))
+        .map((slot) => slot.id);
+      const result = await db
+        .prepare(`UPDATE settings SET value=? WHERE id=1 AND value=?
+        AND EXISTS (SELECT 1 FROM users WHERE id=? AND role='admin')
+        AND NOT EXISTS (SELECT 1 FROM bookings WHERE status IN ('submitted','approved','in_progress')
+          AND ends_at>? AND slot_id IN (SELECT value FROM json_each(?)))`)
+        .bind(
+          JSON.stringify(s),
+          settingsSnapshot.raw,
+          user.id,
+          now,
+          JSON.stringify(changed),
         )
-        .bind(JSON.stringify(s))
         .run();
+      if (!result.meta.changes) fail('schedule_changed');
       return reply({ ok: true });
+    }
+    if (b.action === 'deleteSlots') {
+      requireAdmin(user);
+      if (
+        !validDate(b.from) ||
+        !validDate(b.to) ||
+        b.to < b.from ||
+        Date.parse(b.to) - Date.parse(b.from) > 365 * 86400000 ||
+        !Array.isArray(b.ids) ||
+        !b.ids.length ||
+        b.ids.length > 50000 ||
+        new Set(b.ids).size !== b.ids.length ||
+        b.ids.some((id: unknown) => typeof id !== 'string')
+      )
+        fail('invalid_request');
+      const available = new Map(
+        slotsInRange(settings, b.from, b.to).map((slot) => [slot.id, slot]),
+      );
+      if (b.ids.some((id: string) => !available.has(id)))
+        fail('schedule_changed');
+      const occupied = await db
+        .prepare(
+          "SELECT DISTINCT slot_id FROM bookings WHERE status IN ('submitted','approved','in_progress')",
+        )
+        .all<{ slot_id: string }>();
+      const protectedIds = new Set(occupied.results.map((row) => row.slot_id));
+      const removable: Slot[] = b.ids
+        .filter((id: string) => !protectedIds.has(id))
+        .map((id: string) => available.get(id)!);
+      if (!removable.length)
+        return reply({ ok: true, removed: 0, kept: b.ids.length });
+      const ids = new Set(removable.map((slot) => slot.id));
+      const updated: Settings = {
+        ...settings,
+        slotOverrides: [
+          ...(settings.slotOverrides || []).filter((slot) => !ids.has(slot.id)),
+          ...removable
+            .filter((slot) => slot.windowId)
+            .map((slot) => ({
+              id: slot.id,
+              windowId: slot.windowId,
+              date: slot.date,
+              start: slot.start,
+              end: slot.end,
+              location: slot.location,
+              instructors: slot.instructors,
+              capacity: slot.capacity,
+              enabled: false,
+            })),
+        ],
+      };
+      validateSettings(updated);
+      // A simultaneous booking or timetable edit makes the entire operation retryable.
+      const result = await db
+        .prepare(`UPDATE settings SET value=? WHERE id=1 AND value=?
+        AND EXISTS (SELECT 1 FROM users WHERE id=? AND role='admin')
+        AND NOT EXISTS (SELECT 1 FROM bookings WHERE status IN ('submitted','approved','in_progress')
+          AND slot_id IN (SELECT value FROM json_each(?)))`)
+        .bind(
+          JSON.stringify(updated),
+          settingsSnapshot.raw,
+          user.id,
+          JSON.stringify([...ids]),
+        )
+        .run();
+      if (!result.meta.changes) fail('schedule_changed');
+      return reply({
+        ok: true,
+        removed: removable.length,
+        kept: b.ids.length - removable.length,
+      });
     }
     if (b.action === 'issue' || b.action === 'import') {
       requireAdmin(user);
@@ -670,7 +754,8 @@ export async function POST(req: Request) {
     WHERE candidate.value < ? AND NOT EXISTS(SELECT 1 FROM bookings WHERE slot_id=? AND seat=candidate.value AND status IN ('submitted','approved','in_progress'))
     AND (SELECT count(*) FROM bookings WHERE student_id=? AND status IN ('submitted','approved','in_progress')) < ?
     AND NOT EXISTS(SELECT 1 FROM bookings WHERE student_id=? AND status IN ('submitted','approved','in_progress') AND starts_at<? AND ends_at>?)
-    AND (SELECT blocked_until FROM users WHERE id=?)<=? ORDER BY candidate.value LIMIT 1`)
+    AND (SELECT blocked_until FROM users WHERE id=?)<=?
+    AND (SELECT value FROM settings WHERE id=1)=? ORDER BY candidate.value LIMIT 1`)
         .bind(
           id,
           user.id,
@@ -691,6 +776,7 @@ export async function POST(req: Request) {
           slot.startsAt,
           user.id,
           now,
+          settingsSnapshot.raw,
         )
         .run();
       if (result.meta.changes !== 1) fail('booking_conflict');
@@ -813,6 +899,10 @@ export async function POST(req: Request) {
         : detail;
     const known = [
       'invalid_settings',
+      'invalid_semester',
+      'semester_required',
+      'invalid_recurrence',
+      'schedule_changed',
       'invalid_classrooms',
       'invalid_classroom',
       'booked_slot_locked',

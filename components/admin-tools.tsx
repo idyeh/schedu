@@ -552,14 +552,14 @@ export function TimetableImport({
       <h3>{t('Import weekly timetable', '导入每周课表')}</h3>
       <p className="muted">
         {t(
-          'One row per teaching window. Use instructor account IDs, separated by semicolons. Day accepts Monday–Sunday, 0–6 (Sunday = 0), or 星期一–星期日. The location column must match a configured classroom. Import adds windows to the current timetable.',
-          '每行一个辅导时间范围。填写教师工号，多位教师以分号分隔。星期可填 Monday–Sunday、0–6（周日为 0）或星期一至星期日。地点列必须与已配置的教室名称一致。导入将追加到现有课表。',
+          'One row per teaching window. Use instructor account IDs, separated by semicolons. Day accepts Monday–Sunday, 0–6 (Sunday = 0), or 星期一–星期日. The location column must match a configured classroom. Optional startWeek and repeatWeeks columns set recurrence; blank means week 1 through semester end. Configure semester dates first. Import adds windows to the current timetable.',
+          '每行一个辅导时间范围。填写教师工号，多位教师以分号分隔。星期可填 Monday–Sunday、0–6（周日为 0）或星期一至星期日。地点列必须与已配置的教室名称一致。可选列 startWeek 与 repeatWeeks 设置起始教学周和重复周数，留空表示第 1 周起至学期结束。请先设置学期日期。导入将追加到现有课表。',
         )}
       </p>
       <div className="admin-toolbar">
         <Download
           name="schedu-timetable-template.csv"
-          text={`day,instructors,start,end,location,capacity\nMonday,${staff[0]?.id || 'teacher1'},18:30,20:05,"${(settings.classrooms[0] || '').replaceAll('"', '""')}",1\n`}
+          text={`day,instructors,start,end,location,capacity,startWeek,repeatWeeks\nMonday,${staff[0]?.id || 'teacher1'},18:30,20:05,"${(settings.classrooms[0] || '').replaceAll('"', '""')}",1,1,\n`}
         >
           {t('Download template', '下载模板')}
         </Download>
@@ -577,6 +577,7 @@ export function TimetableImport({
               setRows(null);
               setError('');
               try {
+                if (!settings.semesterStart) throw Error('semester_required');
                 if (file.size > 100000) throw Error();
                 const imported = timetableWindows(await file.text());
                 if (
@@ -592,20 +593,25 @@ export function TimetableImport({
                 setRows(imported);
               } catch (e) {
                 setError(
-                  e instanceof Error && e.message === 'staff'
+                  e instanceof Error && e.message === 'semester_required'
                     ? t(
-                        'An instructor ID was not found. Create the instructor account first.',
-                        '找不到教师工号，请先创建教师账号。',
+                        'Configure semester dates before importing a timetable.',
+                        '请先配置学期日期，再导入课表。',
                       )
-                    : e instanceof Error && e.message === 'invalid_classroom'
+                    : e instanceof Error && e.message === 'staff'
                       ? t(
-                          'A classroom name was not found. Use the exact name from Configuration → Classrooms.',
-                          '找不到教室名称，请使用系统配置中教室列表的准确名称。',
+                          'An instructor ID was not found. Create the instructor account first.',
+                          '找不到教师工号，请先创建教师账号。',
                         )
-                      : t(
-                          'Check the CSV columns, times, capacities and overlapping windows. Nothing was imported.',
-                          '请检查 CSV 列、时间、人数及时间范围是否重叠，尚未导入任何数据。',
-                        ),
+                      : e instanceof Error && e.message === 'invalid_classroom'
+                        ? t(
+                            'A classroom name was not found. Use the exact name from Configuration → Classrooms.',
+                            '找不到教室名称，请使用系统配置中教室列表的准确名称。',
+                          )
+                        : t(
+                            'Check the CSV columns, teaching weeks, times, capacities and overlapping windows. Nothing was imported.',
+                            '请检查 CSV 列、教学周、时间、人数及时间范围是否重叠，尚未导入任何数据。',
+                          ),
                 );
               }
             }}
@@ -628,6 +634,7 @@ export function TimetableImport({
                   t('Instructors', '教师'),
                   t('Location', '地点'),
                   t('Capacity', '人数'),
+                  t('Teaching weeks', '教学周'),
                 ].map((v) => (
                   <TableHead key={v}>{v}</TableHead>
                 ))}
@@ -666,6 +673,12 @@ export function TimetableImport({
                   </TableCell>
                   <TableCell>{w.location}</TableCell>
                   <TableCell>{w.capacity}</TableCell>
+                  <TableCell>
+                    {t(
+                      `Week ${w.startWeek ?? 1} · ${w.repeatWeeks ? `${w.repeatWeeks} weeks` : 'until semester end'}`,
+                      `第 ${w.startWeek ?? 1} 周起 · ${w.repeatWeeks ? `${w.repeatWeeks} 周` : '至学期结束'}`,
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -840,10 +853,7 @@ export function SlotManager({
           {!listed.length && (
             <TableRow>
               <TableCell colSpan={4}>
-                {t(
-                  'No time slots on this date within the booking horizon.',
-                  '此日期在预约开放范围内暂无时段。',
-                )}
+                {t('No time slots on this date.', '此日期暂无时段。')}
               </TableCell>
             </TableRow>
           )}
@@ -875,7 +885,13 @@ export function SlotManager({
                 {t('Date', '日期')}
                 <input
                   type="date"
-                  min={chinaDate()}
+                  min={
+                    settings.semesterStart &&
+                    settings.semesterStart > chinaDate()
+                      ? settings.semesterStart
+                      : chinaDate()
+                  }
+                  max={settings.semesterEnd || undefined}
                   required
                   value={editing.date}
                   onChange={(e) =>

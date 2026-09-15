@@ -79,6 +79,7 @@ import {
   TimetableImport,
   SlotManager,
 } from '@/components/admin-tools';
+import { SemesterSessions } from '@/components/semester-sessions';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
@@ -90,6 +91,11 @@ import {
   clientId,
   maxRosterBytes,
   availabilityDays,
+  addDays,
+  semesterWeeks,
+  semesterWeekOne,
+  windowDates,
+  validDate,
   profileError,
 } from '@/lib/model';
 import type {
@@ -187,6 +193,22 @@ const csvCell = (s: unknown) =>
     .replaceAll('"', '""') +
   '"';
 const errorMessages: Record<string, [string, string]> = {
+  invalid_semester: [
+    'Enter valid semester start and end dates, no more than 366 days apart.',
+    '请填写有效的学期起止日期，学期最多 366 天。',
+  ],
+  semester_required: [
+    'Configure the semester dates before setting recurring weeks.',
+    '请先配置学期起止日期，再设置重复周数。',
+  ],
+  invalid_recurrence: [
+    'Starting week and repeat count must be whole numbers from 1 to 54.',
+    '起始教学周与重复周数必须为 1 至 54 的整数。',
+  ],
+  schedule_changed: [
+    'The timetable or bookings changed during this action. Refresh and review your selection again.',
+    '操作期间课表或预约已变化，请刷新页面后重新检查选择。',
+  ],
   invalid_classrooms: [
     'Enter unique classroom names, one per line (up to 120 characters each).',
     '每行填写一个不重复的教室名称，每个名称最多 120 个字符。',
@@ -1682,7 +1704,6 @@ export default function Home() {
             <Schedule
               settings={settings}
               staff={data!.staff}
-              slots={data!.slots}
               bookings={data!.bookings}
               now={data!.serverTime}
               t={t}
@@ -1698,6 +1719,7 @@ export default function Home() {
                   : ''
               }
               onSave={(s) => act({ action: 'settings', settings: s })}
+              onDelete={(input) => act({ action: 'deleteSlots', ...input }, '')}
             />
           )}
           {view === 'settings' && user.role === 'admin' && (
@@ -2649,28 +2671,39 @@ function IssueAccount({
 function Schedule({
   settings,
   staff,
-  slots,
   bookings,
   now,
   t,
   busy,
   error,
   onSave,
+  onDelete,
 }: {
   settings: Settings;
   staff: Data['staff'];
-  slots: Slot[];
   bookings: Booking[];
   now: number;
   t: T;
   busy: boolean;
   error: string;
-  onSave: (s: Settings) => Promise<any>;
+  onSave: (s: Settings) => Promise<unknown>;
+  onDelete: (input: {
+    from: string;
+    to: string;
+    ids: string[];
+  }) => Promise<{ removed: number; kept: number } | null>;
 }) {
   const [editing, setEditing] = useState<TeachingWindow | null>(null),
     [closed, setClosed] = useState(settings.closedDates.join('\n')),
-    [selectedDate, setSelectedDate] = useState(chinaDate(now));
-  const calendarDays = availabilityDays(settings, bookings, now);
+    [selectedDate, setSelectedDate] = useState(chinaDate(now)),
+    [calendarStart, setCalendarStart] = useState(chinaDate(now)),
+    [scheduleView, setScheduleView] = useState('calendar');
+  const calendarDays = availabilityDays(settings, bookings, now, calendarStart);
+  const selectedSlots = validDate(selectedDate)
+    ? availabilityDays(settings, bookings, now, selectedDate, 1)[0].slots
+    : [];
+  const totalWeeks = semesterWeeks(settings);
+  const recurrenceDates = editing ? windowDates(settings, editing) : [];
   useEffect(
     () => setClosed(settings.closedDates.join('\n')),
     [settings.closedDates],
@@ -2684,8 +2717,8 @@ function Schedule({
       <PageHeading
         title={t('Make room for tutorials.', '安排好每一次交流。')}
         description={t(
-          'See the next four weeks and select a date to manage its time slots.',
-          '一览未来四周的辅导安排，选择日期即可管理具体时段。',
+          'Browse the calendar or review and remove sessions across the whole semester.',
+          '浏览日历，或查看整个学期并批量移除时段。',
         )}
       >
         <button
@@ -2700,6 +2733,21 @@ function Schedule({
               instructors: [],
               capacity: 1,
               enabled: true,
+              ...(settings.semesterStart
+                ? {
+                    startWeek: Math.min(
+                      totalWeeks,
+                      Math.max(
+                        1,
+                        Math.floor(
+                          (Date.parse(chinaDate(now)) -
+                            Date.parse(semesterWeekOne(settings))) /
+                            (7 * 86400000),
+                        ) + 1,
+                      ),
+                    ),
+                  }
+                : {}),
             })
           }
         >
@@ -2714,27 +2762,103 @@ function Schedule({
           `${settings.meetingMinutes} 分钟辅导 · ${settings.breakMinutes} 分钟休息 · 开放未来 ${settings.horizonDays} 天`,
         )}
       </div>
-      <AvailabilityCalendar
-        days={calendarDays}
-        selectedDate={selectedDate}
-        onSelect={setSelectedDate}
-        staff={staff}
-        t={t}
-      />
-      <SlotManager
-        settings={settings}
-        slots={[
-          ...slots.filter((s) => !calendarDays.some((d) => d.date === s.date)),
-          ...calendarDays.flatMap((d) => d.slots),
-        ]}
-        date={selectedDate}
-        onDateChange={setSelectedDate}
-        staff={staff}
-        t={t}
-        busy={busy}
-        error={error}
-        onSave={onSave}
-      />
+      {!settings.semesterStart && (
+        <p className="message">
+          {t(
+            'Set semester dates in Configuration to stop recurring sessions at semester end. Existing schedules continue until dates are set.',
+            '请在系统配置中设置学期起止日期，让重复时段在学期结束时自动停止。设置前已有安排将继续运行。',
+          )}
+        </p>
+      )}
+      <div className="admin-toolbar schedule-navigation">
+        <button
+          className={scheduleView === 'calendar' ? 'primary' : 'secondary'}
+          aria-pressed={scheduleView === 'calendar'}
+          onClick={() => setScheduleView('calendar')}
+        >
+          {t('Calendar', '日历')}
+        </button>
+        <button
+          className={scheduleView === 'semester' ? 'primary' : 'secondary'}
+          aria-pressed={scheduleView === 'semester'}
+          onClick={() => setScheduleView('semester')}
+        >
+          {t('All semester sessions', '学期全部时段')}
+        </button>
+      </div>
+      {scheduleView === 'semester' ? (
+        <SemesterSessions
+          key={`${settings.semesterStart}:${settings.semesterEnd}`}
+          settings={settings}
+          bookings={bookings}
+          staff={staff}
+          now={now}
+          t={t}
+          busy={busy}
+          error={error}
+          onDelete={onDelete}
+        />
+      ) : (
+        <>
+          <div className="admin-toolbar calendar-navigation">
+            <button
+              className="secondary"
+              onClick={() => setCalendarStart(addDays(calendarStart, -28))}
+            >
+              {t('Previous 4 weeks', '前四周')}
+            </button>
+            <button
+              className="secondary"
+              onClick={() => setCalendarStart(chinaDate(now))}
+            >
+              {t('Today', '今天')}
+            </button>
+            {settings.semesterStart && (
+              <button
+                className="secondary"
+                onClick={() => setCalendarStart(settings.semesterStart!)}
+              >
+                {t('Semester start', '学期开始')}
+              </button>
+            )}
+            <label>
+              {t('Show dates from', '显示起始日期')}
+              <input
+                type="date"
+                value={calendarStart}
+                onChange={(e) => {
+                  if (validDate(e.target.value))
+                    setCalendarStart(e.target.value);
+                }}
+              />
+            </label>
+            <button
+              className="secondary"
+              onClick={() => setCalendarStart(addDays(calendarStart, 28))}
+            >
+              {t('Next 4 weeks', '后四周')}
+            </button>
+          </div>
+          <AvailabilityCalendar
+            days={calendarDays}
+            selectedDate={selectedDate}
+            onSelect={setSelectedDate}
+            staff={staff}
+            t={t}
+          />
+          <SlotManager
+            settings={settings}
+            slots={selectedSlots}
+            date={selectedDate}
+            onDateChange={setSelectedDate}
+            staff={staff}
+            t={t}
+            busy={busy}
+            error={error}
+            onSave={onSave}
+          />
+        </>
+      )}
       <details className="weekly-window-editor">
         <summary>
           {t('Weekly teaching windows', '每周辅导时间范围')}{' '}
@@ -2773,6 +2897,14 @@ function Schedule({
                         .map((id) => staff.find((u) => u.id === id)?.name || id)
                         .join(' / ') || t('Unassigned', '未安排教师')}
                     </p>
+                    {settings.semesterStart && (
+                      <p>
+                        {t(
+                          `Week ${w.startWeek ?? 1} · ${w.repeatWeeks ? `${w.repeatWeeks} weeks` : 'until semester end'}`,
+                          `第 ${w.startWeek ?? 1} 周起 · ${w.repeatWeeks ? `${w.repeatWeeks} 周` : '至学期结束'}`,
+                        )}
+                      </p>
+                    )}
                     <small>
                       {w.capacity} {t('seat(s) per slot', '个名额 / 时段')}
                       {!w.enabled ? ' · ' + t('Paused', '已暂停') : ''}
@@ -2859,6 +2991,68 @@ function Schedule({
                   options={days.map((d, i) => ({ value: String(i), label: d }))}
                 />
               </Field>
+              {settings.semesterStart ? (
+                <>
+                  <div className="form-grid">
+                    <Field label={t('Starting teaching week', '起始教学周')}>
+                      <input
+                        type="number"
+                        min={1}
+                        max={totalWeeks}
+                        required
+                        value={editing.startWeek ?? 1}
+                        onChange={(e) =>
+                          setEditing({
+                            ...editing,
+                            startWeek: Number(e.target.value),
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label={t('Repeat for (weeks)', '重复周数')}>
+                      <input
+                        type="number"
+                        min={1}
+                        max={54}
+                        value={editing.repeatWeeks ?? ''}
+                        placeholder={t('Until semester end', '至学期结束')}
+                        onChange={(e) =>
+                          setEditing({
+                            ...editing,
+                            repeatWeeks: e.target.value
+                              ? Number(e.target.value)
+                              : undefined,
+                          })
+                        }
+                      />
+                    </Field>
+                  </div>
+                  <p className="footnote">
+                    {t(
+                      'Leave repeat count blank to continue through semester end. Dates off do not extend the series.',
+                      '重复周数留空则持续至学期结束，停课日期不会顺延。',
+                    )}
+                  </p>
+                  <p className="subtle-chip">
+                    {recurrenceDates.length
+                      ? t(
+                          `${recurrenceDates[0]} – ${recurrenceDates.at(-1)} · ${recurrenceDates.length} weekly dates before dates off`,
+                          `${recurrenceDates[0]} 至 ${recurrenceDates.at(-1)} · ${recurrenceDates.length} 次每周安排（未扣除停课）`,
+                        )
+                      : t(
+                          'No dates within this semester.',
+                          '本学期内没有符合条件的日期。',
+                        )}
+                  </p>
+                </>
+              ) : (
+                <p className="warning-text">
+                  {t(
+                    'Configure semester dates before adding a teaching window.',
+                    '请先配置学期起止日期，再添加辅导时间范围。',
+                  )}
+                </p>
+              )}
               <div className="form-grid">
                 <Field label={t('Starts at', '开始时间')}>
                   <input
@@ -2983,7 +3177,10 @@ function Schedule({
                 <button
                   className="primary"
                   disabled={
-                    busy || !settings.classrooms.includes(editing.location)
+                    busy ||
+                    !settings.classrooms.includes(editing.location) ||
+                    (!settings.semesterStart &&
+                      !settings.windows.some((w) => w.id === editing.id))
                   }
                 >
                   {t('Save teaching window', '保存时间安排')}
@@ -3049,6 +3246,44 @@ function SettingsPage({
           });
         }}
       >
+        <section className="panel">
+          <h3>{t('Semester', '学期')}</h3>
+          <p className="muted">
+            {t(
+              'Teaching weeks run Monday–Sunday. Week 1 contains the semester start date; sessions stop at the end date, including a partial final week.',
+              '教学周按周一至周日计算，学期开始日期所在周为第 1 周。安排严格在学期结束日期停止，最后一周不足七天时也不例外。',
+            )}
+          </p>
+          <div className="form-grid">
+            <Field label={t('Semester start date', '学期开始日期')}>
+              <input
+                type="date"
+                required={!!s.semesterEnd}
+                value={s.semesterStart || ''}
+                onChange={(e) => setS({ ...s, semesterStart: e.target.value })}
+              />
+            </Field>
+            <Field label={t('Semester end date', '学期结束日期')}>
+              <input
+                type="date"
+                required={!!s.semesterStart}
+                min={s.semesterStart || undefined}
+                value={s.semesterEnd || ''}
+                onChange={(e) => setS({ ...s, semesterEnd: e.target.value })}
+              />
+            </Field>
+          </div>
+          {validDate(s.semesterStart) &&
+            validDate(s.semesterEnd) &&
+            s.semesterEnd >= s.semesterStart && (
+              <p className="footnote">
+                {t(
+                  `${semesterWeeks(s)} teaching weeks. Existing windows follow these boundaries.`,
+                  `共 ${semesterWeeks(s)} 个教学周，已有时间范围也遵循此学期边界。`,
+                )}
+              </p>
+            )}
+        </section>
         <section className="panel">
           <h3>{t('Booking rules', '预约规则')}</h3>
           <div className="form-grid">

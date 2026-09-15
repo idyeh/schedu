@@ -317,4 +317,55 @@ class Flows(unittest.TestCase):
             saved=json.loads(db.execute('SELECT value FROM settings WHERE id=1').fetchone()[0])
             self.assertEqual(saved['classrooms'],['Room 101','Room 102'])
 
+    def test_13_semester_bulk_removal_keeps_booked_sessions_beyond_28_days(self):
+        student,_=issue('semesterstudent')
+        cfg=admin.ok()['settings']
+        cfg.update(semesterStart=now.strftime('%Y-%m-%d'),semesterEnd=(now+datetime.timedelta(days=70)).strftime('%Y-%m-%d'),horizonDays=90,meetingMinutes=1,breakMinutes=0,closedDates=[],slotOverrides=[])
+        cfg['windows']=[{'id':'semester-window','day':day,'start':'18:30','end':'20:05','location':'Room 101','instructors':['classroomteacher'],'capacity':1,'enabled':True,'startWeek':1,'repeatWeeks':10}]
+        self.assertEqual(student.call({'action':'settings','settings':cfg})[0],403)
+        admin.ok({'action':'settings','settings':cfg})
+        state=admin.ok();slots=state['slots']
+        self.assertGreater(len(slots),500)
+        self.assertTrue(all(cfg['semesterStart']<=slot['date']<=cfg['semesterEnd'] for slot in slots))
+        far=next(slot for slot in slots if slot['date']>(now+datetime.timedelta(days=40)).strftime('%Y-%m-%d'))
+        booking=student.ok({'action':'book','slotId':far['id']})
+        cfg['horizonDays']=1;admin.ok({'action':'settings','settings':cfg})
+        # Existing bookings are protected even after the booking horizon is shortened.
+        shortened={**cfg,'semesterEnd':tomorrow.strftime('%Y-%m-%d')}
+        self.assertEqual(admin.call({'action':'settings','settings':shortened})[1]['error'],'booked_slot_locked')
+        request={'action':'deleteSlots','from':cfg['semesterStart'],'to':cfg['semesterEnd'],'ids':[slot['id'] for slot in slots]}
+        self.assertEqual(student.call(request)[0],403)
+        self.assertEqual(admin.call({**request,'ids':['not-a-real-slot']})[1]['error'],'schedule_changed')
+        result=admin.ok(request)
+        self.assertEqual(result['removed'],len(slots)-1);self.assertEqual(result['kept'],1)
+        after=student.ok();self.assertEqual(after['user']['blockedUntil'],0)
+        self.assertEqual(next(b for b in after['bookings'] if b['id']==booking['id'])['status'],'approved')
+        self.assertEqual(admin.ok({**request,'ids':[far['id']]})['removed'],0)
+        cfg=admin.ok()['settings'];self.assertEqual(len(cfg['slotOverrides']),len(slots)-1)
+        cfg['horizonDays']=90;admin.ok({'action':'settings','settings':cfg})
+        self.assertEqual([slot['id'] for slot in admin.ok()['slots']],[far['id']])
+
+    def test_14_booking_and_batch_removal_race_never_deletes_a_booked_slot(self):
+        student,_=issue('racesemester')
+        cfg=admin.ok()['settings']
+        extra={'id':'race-semester-slot','windowId':'','date':tomorrow.strftime('%Y-%m-%d'),'start':'21:00','end':'21:10','location':'Room 102','instructors':['classroomteacher'],'capacity':1,'enabled':True}
+        cfg['slotOverrides'].append(extra);admin.ok({'action':'settings','settings':cfg})
+        remove={'action':'deleteSlots','from':extra['date'],'to':extra['date'],'ids':[extra['id']]}
+        with concurrent.futures.ThreadPoolExecutor(2) as pool:
+            booking=pool.submit(student.call,{'action':'book','slotId':extra['id']})
+            deletion=pool.submit(admin.call,remove)
+            booked,deleted=booking.result(),deletion.result()
+        state=admin.ok();exists=any(slot['id']==extra['id'] for slot in state['slots'])
+        active=any(b['slot']['id']==extra['id'] and b['status']=='approved' for b in state['bookings'])
+        self.assertFalse(active and not exists)
+        if booked[0]==200:
+            self.assertTrue(exists)
+            if deleted[0]==200:self.assertEqual(deleted[1]['kept'],1)
+            else:self.assertEqual(deleted[1]['error'],'schedule_changed')
+        else:
+            self.assertEqual(deleted[0],200)
+            self.assertEqual(deleted[1]['removed'],1)
+            self.assertFalse(exists)
+        self.assertEqual(student.ok()['user']['blockedUntil'],0)
+
 if __name__=='__main__':unittest.main(verbosity=2)

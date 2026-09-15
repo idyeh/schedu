@@ -2272,3 +2272,62 @@ textarea:focus {
 .reset-scope li + li {
   margin-top: 8px;
 }
+
+/* Semester planning keeps the same controls and spacing as the roster tools. */
+.schedule-navigation,
+.calendar-navigation {
+  margin: 20px 0;
+}
+.calendar-navigation {
+  align-items: end;
+}
+.schedule-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+.schedule-filters label,
+.calendar-navigation label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.schedule-filters .choice {
+  width: 100%;
+}
+.schedule-filters [data-slot='select-value'] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.roster-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 24px;
+}
+.roster-pagination form label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.roster-pagination input {
+  width: 80px;
+}
+@media (max-width: 900px) {
+  .schedule-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .schedule-filters {
+    grid-template-columns: 1fr;
+  }
+  .calendar-navigation label {
+    width: 100%;
+  }
+}

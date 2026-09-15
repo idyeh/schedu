@@ -13,6 +13,9 @@ import {
   accountStatus,
   paginationItems,
   normaliseSettings,
+  semesterWeeks,
+  windowDates,
+  slotsInRange,
 } from '../lib/model.ts';
 const monday = new Date('2026-09-07T08:00:00+08:00').getTime();
 const settings = {
@@ -346,4 +349,189 @@ test('pagination shows neighbours, first and last pages without duplicate number
     24,
     25,
   ]);
+});
+
+void test('semester boundaries include partial weeks and stop dates after the final day', () => {
+  const term = {
+    ...settings,
+    semesterStart: '2026-09-09',
+    semesterEnd: '2027-01-12',
+    horizonDays: 90,
+  };
+  const tuesday = { ...term.windows[0], day: 2 };
+  assert.equal(semesterWeeks(term), 19);
+  const dates = windowDates(term, tuesday);
+  assert.equal(dates[0], '2026-09-15');
+  assert.equal(dates.at(-1), '2027-01-12');
+  const slots = slotsInRange(
+    { ...term, windows: [tuesday] },
+    '2026-09-01',
+    '2027-02-01',
+  );
+  assert.equal(slots[0].date, '2026-09-15');
+  assert.equal(slots.at(-1)?.date, '2027-01-12');
+  assert.equal(
+    generateSlots(
+      { ...term, windows: [tuesday] },
+      Date.parse('2027-01-13T00:00:00+08:00'),
+    ).length,
+    0,
+  );
+});
+void test('starting week and repeat count count calendar weeks without extending for dates off', () => {
+  const term = {
+    ...settings,
+    semesterStart: '2026-09-07',
+    semesterEnd: '2026-10-20',
+    windows: [{ ...settings.windows[0], day: 2, startWeek: 2, repeatWeeks: 3 }],
+    closedDates: ['2026-09-22'],
+  };
+  assert.deepEqual(windowDates(term, term.windows[0]), [
+    '2026-09-15',
+    '2026-09-22',
+    '2026-09-29',
+  ]);
+  assert.deepEqual(
+    [
+      ...new Set(
+        slotsInRange(term, '2026-09-01', '2026-11-01').map((s) => s.date),
+      ),
+    ],
+    ['2026-09-15', '2026-09-29'],
+  );
+  const long = { ...term.windows[0], startWeek: 6, repeatWeeks: 20 };
+  assert.deepEqual(windowDates(term, long), ['2026-10-13', '2026-10-20']);
+});
+void test('dated changes respect recurrence bounds and may move within the same teaching week', () => {
+  const term = {
+    ...settings,
+    semesterStart: '2026-09-07',
+    semesterEnd: '2026-09-20',
+    windows: [{ ...settings.windows[0], repeatWeeks: 1 }],
+  };
+  const slot = slotsInRange(term, '2026-09-07', '2026-09-07')[0];
+  const moved = { ...slot, date: '2026-09-08', enabled: true };
+  assert.doesNotThrow(() =>
+    validateSettings({ ...term, slotOverrides: [moved] }),
+  );
+  assert.equal(
+    slotsInRange(
+      { ...term, slotOverrides: [moved] },
+      '2026-09-07',
+      '2026-10-01',
+    ).filter((s) => s.id === slot.id)[0].date,
+    '2026-09-08',
+  );
+  assert.equal(
+    slotsInRange(
+      { ...term, slotOverrides: [{ ...moved, date: '2026-09-21' }] },
+      '2026-09-07',
+      '2026-10-01',
+    ).some((s) => s.id === slot.id),
+    false,
+  );
+  assert.equal(
+    slotsInRange(
+      { ...term, slotOverrides: [{ ...moved, date: '2026-09-14' }] },
+      '2026-09-07',
+      '2026-10-01',
+    ).some((s) => s.id === slot.id),
+    false,
+  );
+});
+void test('matching times may be reused in disjoint teaching weeks', () => {
+  const first = { ...settings.windows[0], startWeek: 1, repeatWeeks: 2 };
+  const next = { ...first, id: 'later', startWeek: 3 };
+  const term = {
+    ...settings,
+    semesterStart: '2026-09-07',
+    semesterEnd: '2026-12-31',
+    windows: [first, next],
+  };
+  assert.doesNotThrow(() => validateSettings(term));
+  assert.throws(
+    () =>
+      validateSettings({
+        ...term,
+        windows: [first, { ...next, startWeek: 2 }],
+      }),
+    /window_overlap/,
+  );
+});
+void test('semester validation rejects impossible dates, reversed ranges and invalid recurrence', () => {
+  for (const patch of [
+    { semesterStart: '2026-02-30', semesterEnd: '2026-05-01' },
+    { semesterStart: '2026-09-07', semesterEnd: '' },
+    { semesterStart: '2026-09-07', semesterEnd: '2026-09-01' },
+    { semesterStart: '2026-09-07', semesterEnd: '2028-01-01' },
+  ])
+    assert.throws(
+      () => validateSettings({ ...settings, ...patch }),
+      /invalid_semester/,
+    );
+  const term = {
+    ...settings,
+    semesterStart: '2026-09-07',
+    semesterEnd: '2027-01-12',
+  };
+  for (const patch of [
+    { startWeek: 0 },
+    { repeatWeeks: 0 },
+    { repeatWeeks: 1.5 },
+    { startWeek: 55 },
+  ])
+    assert.throws(
+      () =>
+        validateSettings({
+          ...term,
+          windows: [{ ...term.windows[0], ...patch }],
+        }),
+      /invalid_recurrence/,
+    );
+  assert.throws(
+    () =>
+      validateSettings({
+        ...settings,
+        windows: [{ ...settings.windows[0], repeatWeeks: 3 }],
+      }),
+    /semester_required/,
+  );
+});
+void test('calendar navigation shows distant semester sessions without opening student bookings early', () => {
+  const term = {
+    ...settings,
+    horizonDays: 28,
+    semesterStart: '2026-09-07',
+    semesterEnd: '2027-01-12',
+  };
+  const days = availabilityDays(term, [], monday, '2026-11-02');
+  assert.equal(
+    availabilityDays(term, [], Date.parse('2026-09-07T20:00:00+08:00'))[0].slots
+      .length,
+    0,
+  );
+  const past = availabilityDays(
+    term,
+    [],
+    Date.parse('2026-09-08T08:00:00+08:00'),
+    '2026-09-07',
+  );
+  assert.equal(past[0].past, true);
+  assert.equal(past[0].slots.length, 6);
+  assert.equal(days[0].date, '2026-11-02');
+  assert.equal(days[0].slots.length, 6);
+  assert.equal(days[0].bookable, false);
+  assert.equal(
+    days.some((d) => d.today),
+    false,
+  );
+  assert.equal(
+    generateSlots(term, monday).some((s) => s.date === '2026-11-02'),
+    false,
+  );
+  const imported = timetableWindows(
+    'day,instructors,start,end,location,capacity,startWeek,repeatWeeks\nTuesday,teacher1,18:30,20:05,A302,1,2,8',
+  )[0];
+  assert.equal(imported.startWeek, 2);
+  assert.equal(imported.repeatWeeks, 8);
 });

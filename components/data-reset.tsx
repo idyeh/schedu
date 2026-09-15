@@ -98,8 +98,8 @@ export function DataReset({
             </li>
             <li>
               {t(
-                'Restore default booking rules, class lists, classrooms, evaluations and app preferences.',
-                '恢复默认预约规则、班级与教室选项、评价选项及应用偏好。',
+                'Clear semester dates and restore default booking rules, class lists, classrooms, evaluations and app preferences.',
+                '清除学期日期，恢复默认预约规则、班级与教室选项、评价选项及应用偏好。',
               )}
             </li>
             <li>

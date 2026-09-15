@@ -32,6 +32,8 @@ export type Window = {
   instructors: string[];
   capacity: number;
   enabled: boolean;
+  startWeek?: number;
+  repeatWeeks?: number;
 };
 export type Evaluation = { score: number; en: string; zh: string };
 export type Settings = {
@@ -40,6 +42,8 @@ export type Settings = {
   cancellationWeeks: number;
   maxUpcoming: number;
   horizonDays: number;
+  semesterStart?: string;
+  semesterEnd?: string;
   defaultLanguage: string;
   defaultTheme: string;
   adminClasses: string[];
@@ -111,6 +115,8 @@ export const defaultSettings: Settings = {
   cancellationWeeks: 2,
   maxUpcoming: 1,
   horizonDays: 28,
+  semesterStart: '',
+  semesterEnd: '',
   defaultLanguage: 'zh-CN',
   defaultTheme: 'system',
   adminClasses: [
@@ -169,15 +175,99 @@ export function minutes(time: string) {
 export function clockTime(n: number) {
   return `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
 }
+export function validDate(date: unknown): date is string {
+  return (
+    typeof date === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+    Number.isFinite(Date.parse(date)) &&
+    new Date(date).toISOString().slice(0, 10) === date
+  );
+}
+export function addDays(date: string, days: number) {
+  return new Date(Date.parse(date + 'T00:00:00Z') + days * 86400000)
+    .toISOString()
+    .slice(0, 10);
+}
+export function semesterWeekOne(settings: Settings) {
+  const date = settings.semesterStart!;
+  return addDays(date, -(new Date(date + 'T12:00:00Z').getUTCDay() + 6) % 7);
+}
+export function semesterWeeks(settings: Settings) {
+  if (!settings.semesterStart || !settings.semesterEnd) return 0;
+  return (
+    Math.floor(
+      (Date.parse(settings.semesterEnd) -
+        Date.parse(semesterWeekOne(settings))) /
+        (7 * 86400000),
+    ) + 1
+  );
+}
+export function inSemester(settings: Settings, date: string) {
+  return (
+    (!settings.semesterStart || date >= settings.semesterStart) &&
+    (!settings.semesterEnd || date <= settings.semesterEnd)
+  );
+}
+export function windowOccursOn(
+  settings: Settings,
+  window: Window,
+  date: string,
+) {
+  return (
+    new Date(date + 'T12:00:00Z').getUTCDay() === window.day &&
+    windowIncludesDate(settings, window, date)
+  );
+}
+export function windowIncludesDate(
+  settings: Settings,
+  window: Window,
+  date: string,
+) {
+  if (!inSemester(settings, date)) return false;
+  if (!settings.semesterStart) return true; // Preserve existing schedules until a semester is configured.
+  const week =
+    Math.floor(
+      (Date.parse(date) - Date.parse(semesterWeekOne(settings))) /
+        (7 * 86400000),
+    ) + 1;
+  const first = window.startWeek ?? 1;
+  return (
+    week >= first &&
+    (window.repeatWeeks === undefined || week < first + window.repeatWeeks)
+  );
+}
+export function windowDates(settings: Settings, window: Window) {
+  if (!settings.semesterStart || !settings.semesterEnd) return [];
+  const dates: string[] = [];
+  for (
+    let date = settings.semesterStart;
+    date <= settings.semesterEnd;
+    date = addDays(date, 1)
+  )
+    if (windowOccursOn(settings, window, date)) dates.push(date);
+  return dates;
+}
 export function generateSlots(settings: Settings, now = Date.now()): Slot[] {
+  const from = chinaDate(now);
+  return slotsInRange(
+    settings,
+    from,
+    addDays(from, settings.horizonDays - 1),
+    now,
+  );
+}
+export function slotsInRange(
+  settings: Settings,
+  from: string,
+  to: string,
+  cutoff = -Infinity,
+): Slot[] {
   const slots: Slot[] = [];
-  const base = new Date(chinaDate(now) + 'T00:00:00+08:00').getTime();
-  for (let d = 0; d < settings.horizonDays; d++) {
-    const date = chinaDate(base + d * 86400000);
-    if (settings.closedDates.includes(date)) continue;
-    const day = new Date(date + 'T12:00:00+08:00').getUTCDay();
+  for (let date = from; date <= to; date = addDays(date, 1)) {
+    if (settings.closedDates.includes(date) || !inSemester(settings, date))
+      continue;
     for (const w of settings.windows.filter(
-      (w) => w.enabled && w.day === day,
+      (w) => w.enabled && windowOccursOn(settings, w, date),
     )) {
       for (
         let m = minutes(w.start);
@@ -185,7 +275,7 @@ export function generateSlots(settings: Settings, now = Date.now()): Slot[] {
         m += settings.meetingMinutes + settings.breakMinutes
       ) {
         const startsAt = new Date(`${date}T${clockTime(m)}:00+08:00`).getTime();
-        if (startsAt <= now) continue;
+        if (startsAt <= cutoff) continue;
         slots.push({
           id: `${w.id}_${date}_${clockTime(m)}`,
           windowId: w.id,
@@ -211,13 +301,20 @@ export function generateSlots(settings: Settings, now = Date.now()): Slot[] {
     if (
       !s.enabled ||
       settings.closedDates.includes(s.date) ||
-      startsAt <= now ||
-      startsAt >= base + settings.horizonDays * 86400000
+      startsAt <= cutoff ||
+      s.date < from ||
+      s.date > to ||
+      !inSemester(settings, s.date)
     )
       continue;
     if (
       s.windowId &&
-      !settings.windows.some((w) => w.id === s.windowId && w.enabled)
+      !settings.windows.some(
+        (w) =>
+          w.id === s.windowId &&
+          w.enabled &&
+          windowIncludesDate(settings, w, s.date),
+      )
     )
       continue;
     effective.push({
@@ -260,6 +357,14 @@ export function profileError(
   return null;
 }
 export function validateSettings(s: Settings) {
+  if (
+    (s.semesterStart || s.semesterEnd) &&
+    (!validDate(s.semesterStart) ||
+      !validDate(s.semesterEnd) ||
+      s.semesterEnd < s.semesterStart ||
+      Date.parse(s.semesterEnd) - Date.parse(s.semesterStart) > 365 * 86400000)
+  )
+    throw Error('invalid_semester');
   for (const [k, min, max] of [
     ['meetingMinutes', 1, 120],
     ['breakMinutes', 0, 60],
@@ -326,6 +431,22 @@ export function validateSettings(s: Settings) {
   )
     throw Error('invalid_settings');
   for (const w of s.windows) {
+    if (
+      (w.startWeek !== undefined || w.repeatWeeks !== undefined) &&
+      !s.semesterStart
+    )
+      throw Error('semester_required');
+    if (
+      (w.startWeek !== undefined &&
+        (!Number.isInteger(w.startWeek) ||
+          w.startWeek < 1 ||
+          w.startWeek > 54)) ||
+      (w.repeatWeeks !== undefined &&
+        (!Number.isInteger(w.repeatWeeks) ||
+          w.repeatWeeks < 1 ||
+          w.repeatWeeks > 54))
+    )
+      throw Error('invalid_recurrence');
     if (!s.classrooms.includes(w.location)) throw Error('invalid_classroom');
     if (
       !/^[\w-]{1,50}$/.test(w.id) ||
@@ -350,7 +471,7 @@ export function validateSettings(s: Settings) {
   const overrides = s.slotOverrides || [];
   if (
     !Array.isArray(overrides) ||
-    overrides.length > 500 ||
+    overrides.length > 50000 ||
     new Set(overrides.map((o) => o.id)).size !== overrides.length
   )
     throw Error('invalid_settings');
@@ -409,6 +530,8 @@ export function validateSettings(s: Settings) {
         a.enabled &&
         b.enabled &&
         a.day === b.day &&
+        (!s.semesterStart ||
+          windowDates(s, a).some((date) => windowOccursOn(s, b, date))) &&
         minutes(a.start) < minutes(b.end) &&
         minutes(b.start) < minutes(a.end) &&
         (a.location === b.location ||
@@ -499,6 +622,8 @@ export function timetableWindows(text: string): Window[] {
         .map((v) => v.trim())
         .filter(Boolean),
       enabled: true,
+      ...(r.startWeek ? { startWeek: Number(r.startWeek) } : {}),
+      ...(r.repeatWeeks ? { repeatWeeks: Number(r.repeatWeeks) } : {}),
     };
   });
 }
@@ -507,25 +632,32 @@ export function availabilityDays(
   settings: Settings,
   bookings: Booking[],
   now: number,
+  from = chinaDate(now),
+  count = 28,
 ) {
   const counts = new Map<string, number>();
   for (const b of bookings)
     if (activeStatuses.includes(b.status))
       counts.set(b.slot.id, (counts.get(b.slot.id) || 0) + 1);
-  const slots = generateSlots({ ...settings, horizonDays: 28 }, now).map(
-    (s) => ({
+  const slots = slotsInRange(settings, from, addDays(from, count - 1))
+    .filter((s) => s.date < chinaDate(now) || s.startsAt > now)
+    .map((s) => ({
       ...s,
       remaining: Math.max(0, s.capacity - (counts.get(s.id) || 0)),
-    }),
-  );
-  const start = Date.parse(chinaDate(now) + 'T00:00:00+08:00');
-  return Array.from({ length: 28 }, (_, i) => {
+    }));
+  const start = Date.parse(from + 'T00:00:00+08:00');
+  return Array.from({ length: count }, (_, i) => {
     const date = chinaDate(start + i * 86400000);
     return {
       date,
       slots: slots.filter((s) => s.date === date),
       closed: settings.closedDates.includes(date),
-      bookable: i < settings.horizonDays,
+      bookable:
+        date >= chinaDate(now) &&
+        date < addDays(chinaDate(now), settings.horizonDays) &&
+        inSemester(settings, date),
+      today: date === chinaDate(now),
+      past: date < chinaDate(now),
     };
   });
 }

@@ -163,3 +163,10 @@ An administrator can open **Configuration → Reset app data** to review and cle
 Take an online backup using the backup commands above before confirming. Existing backup files are retained, and restoring a backup is the recovery path if a reset was unintended. Reset also clears the classroom list. The roster filtering, pagination and reset update requires rebuilding the app image; no additional database migration is needed.
 
 The classroom configuration update also requires rebuilding the app image, with no additional database migration. Existing schedule locations automatically populate Configuration → Classrooms on upgrade and are persisted when settings are saved. New installations and resets start with no classrooms; add room names before scheduling. Weekly windows, individual slots and timetable imports must use those names. Removing a classroom requires updating or removing the schedules that still reference it first.
+
+
+## Semester scheduling update
+
+Rebuild the image with the usual update command; no new migration, port or environment variable is required. In Configuration → Semester, enter the start and end dates before adding/importing new teaching windows. Existing windows are preserved and become bounded by these dates when saved. Moving a semester boundary or editing a series cannot remove or change an active booked slot.
+
+Availability now includes calendar navigation and All semester sessions for review and batch removal beyond the 28-day view. Batch removal keeps active booked sessions, preserves all meeting history and applies no student penalty. Reset app data also clears semester dates. A full-semester selection supports up to 50,000 sessions; external reverse proxies should retain the documented 20 MB request-body allowance.
