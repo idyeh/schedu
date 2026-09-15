@@ -813,6 +813,8 @@ export async function POST(req: Request) {
         : detail;
     const known = [
       'invalid_settings',
+      'invalid_classrooms',
+      'invalid_classroom',
       'booked_slot_locked',
       'user_has_history',
       'window_overlap',

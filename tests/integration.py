@@ -55,6 +55,7 @@ def issue(id,role='student',fresh=True):
 teacher,_=issue('teacher1','instructor'); outsider,_=issue('teacher2','instructor')
 a,apass=issue('student1'); b,bpass=issue('student2',fresh=False)
 tomorrow=now+datetime.timedelta(days=1); day=(tomorrow.weekday()+1)%7
+settings['classrooms']=['A302','B201','Edited room']
 settings['windows']=[{'id':'test-window','day':day,'start':'18:30','end':'20:05','location':'A302','instructors':['teacher1'],'capacity':1,'enabled':True}]
 admin.ok({'action':'settings','settings':settings})
 class Flows(unittest.TestCase):
@@ -271,6 +272,7 @@ class Flows(unittest.TestCase):
         self.assertEqual(after['bookings'],[])
         self.assertEqual(after['slots'],[])
         self.assertEqual(after['settings']['windows'],[])
+        self.assertEqual(after['settings']['classrooms'],[])
         self.assertEqual(after['settings']['closedDates'],[])
         self.assertEqual(after['settings'].get('slotOverrides',[]),[])
         self.assertEqual(after['settings']['cancellationWeeks'],2)
@@ -283,5 +285,36 @@ class Flows(unittest.TestCase):
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         fresh,_=issue('afterReset')
         self.assertEqual(fresh.ok()['user']['id'],'afterReset')
+
+    def test_12_classroom_configuration_and_legacy_upgrade(self):
+        student,_=issue('classroomstudent')
+        issue('classroomteacher','instructor')
+        cfg=admin.ok()['settings'];cfg['classrooms']=['Room 101','Room 102']
+        self.assertEqual(student.call({'action':'settings','settings':cfg})[0],403)
+        admin.ok({'action':'settings','settings':cfg})
+        window={'id':'classroom-window','day':day,'start':'18:30','end':'20:05','location':'Unknown room','instructors':['classroomteacher'],'capacity':1,'enabled':True}
+        cfg['windows']=[window]
+        self.assertEqual(admin.call({'action':'settings','settings':cfg})[1]['error'],'invalid_classroom')
+        self.assertEqual(admin.ok()['settings']['windows'],[])
+        window['location']='Room 101';admin.ok({'action':'settings','settings':cfg})
+        extra={'id':'classroom-extra','windowId':'','date':tomorrow.strftime('%Y-%m-%d'),'start':'21:00','end':'21:10','location':'Unknown room','instructors':['classroomteacher'],'capacity':1,'enabled':True}
+        cfg['slotOverrides']=[extra]
+        self.assertEqual(admin.call({'action':'settings','settings':cfg})[1]['error'],'invalid_classroom')
+        extra['location']='Room 102';admin.ok({'action':'settings','settings':cfg})
+        cfg['classrooms']=['Room 101']
+        self.assertEqual(admin.call({'action':'settings','settings':cfg})[1]['error'],'invalid_classroom')
+        self.assertEqual(admin.ok()['settings']['classrooms'],['Room 101','Room 102'])
+        # Simulate a pre-upgrade installation in the isolated fixture database.
+        legacy=dict(cfg);legacy.pop('classrooms')
+        with sqlite3.connect(DB) as db:
+            db.execute('UPDATE settings SET value=? WHERE id=1',(json.dumps(legacy),))
+        upgraded=admin.ok()['settings']
+        self.assertEqual(upgraded['classrooms'],['Room 101','Room 102'])
+        self.assertEqual(upgraded['windows'],legacy['windows'])
+        self.assertEqual(upgraded['slotOverrides'],legacy['slotOverrides'])
+        admin.ok({'action':'settings','settings':upgraded})
+        with sqlite3.connect(DB) as db:
+            saved=json.loads(db.execute('SELECT value FROM settings WHERE id=1').fetchone()[0])
+            self.assertEqual(saved['classrooms'],['Room 101','Room 102'])
 
 if __name__=='__main__':unittest.main(verbosity=2)

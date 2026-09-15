@@ -552,14 +552,14 @@ export function TimetableImport({
       <h3>{t('Import weekly timetable', '导入每周课表')}</h3>
       <p className="muted">
         {t(
-          'One row per teaching window. Use instructor account IDs, separated by semicolons. Day accepts Monday–Sunday, 0–6 (Sunday = 0), or 星期一–星期日. Import adds windows to the current timetable.',
-          '每行一个辅导时间范围。填写教师工号，多位教师以分号分隔。星期可填 Monday–Sunday、0–6（周日为 0）或星期一至星期日。导入将追加到现有课表。',
+          'One row per teaching window. Use instructor account IDs, separated by semicolons. Day accepts Monday–Sunday, 0–6 (Sunday = 0), or 星期一–星期日. The location column must match a configured classroom. Import adds windows to the current timetable.',
+          '每行一个辅导时间范围。填写教师工号，多位教师以分号分隔。星期可填 Monday–Sunday、0–6（周日为 0）或星期一至星期日。地点列必须与已配置的教室名称一致。导入将追加到现有课表。',
         )}
       </p>
       <div className="admin-toolbar">
         <Download
           name="schedu-timetable-template.csv"
-          text={`day,instructors,start,end,location,capacity\nMonday,${staff[0]?.id || 'teacher1'},18:30,20:05,A302,1\n`}
+          text={`day,instructors,start,end,location,capacity\nMonday,${staff[0]?.id || 'teacher1'},18:30,20:05,"${(settings.classrooms[0] || '').replaceAll('"', '""')}",1\n`}
         >
           {t('Download template', '下载模板')}
         </Download>
@@ -597,10 +597,15 @@ export function TimetableImport({
                         'An instructor ID was not found. Create the instructor account first.',
                         '找不到教师工号，请先创建教师账号。',
                       )
-                    : t(
-                        'Check the CSV columns, times, capacities and overlapping windows. Nothing was imported.',
-                        '请检查 CSV 列、时间、人数及时间范围是否重叠，尚未导入任何数据。',
-                      ),
+                    : e instanceof Error && e.message === 'invalid_classroom'
+                      ? t(
+                          'A classroom name was not found. Use the exact name from Configuration → Classrooms.',
+                          '找不到教室名称，请使用系统配置中教室列表的准确名称。',
+                        )
+                      : t(
+                          'Check the CSV columns, times, capacities and overlapping windows. Nothing was imported.',
+                          '请检查 CSV 列、时间、人数及时间范围是否重叠，尚未导入任何数据。',
+                        ),
                 );
               }
             }}
@@ -896,16 +901,27 @@ export function SlotManager({
                 ))}
               </div>
               <label>
-                {t('Location', '地点')}
-                <input
-                  required
-                  maxLength={120}
+                {t('Classroom', '教室')}
+                <Choice
+                  label={t('Choose a classroom', '选择教室')}
                   value={editing.location}
-                  onChange={(e) =>
-                    setEditing({ ...editing, location: e.target.value })
-                  }
+                  disabled={busy || !settings.classrooms.length}
+                  onChange={(location) => setEditing({ ...editing, location })}
+                  options={settings.classrooms.map((value) => ({
+                    value,
+                    label: value,
+                  }))}
                 />
               </label>
+              {!settings.classrooms.length && (
+                <p className="footnote">
+                  {t(
+                    'Add classrooms in Configuration before scheduling.',
+                    '请先在系统配置中添加教室，再安排辅导。',
+                  )}
+                </p>
+              )}
+
               <label>
                 {t('Capacity', '人数')}
                 <input
@@ -941,7 +957,12 @@ export function SlotManager({
                   {error}
                 </p>
               )}
-              <button className="primary" disabled={busy}>
+              <button
+                className="primary"
+                disabled={
+                  busy || !settings.classrooms.includes(editing.location)
+                }
+              >
                 {t('Save time slot', '保存时段')}
               </button>
             </form>

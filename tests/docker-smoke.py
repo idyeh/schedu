@@ -29,6 +29,7 @@ now=datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
 profiles={'grade':now.year,'adminClass':'26电H一','teachingClass':'Class 1','chineseName':'测试学生','englishName':'Test Student','phone':'13800000000'}
 credentials=admin.ok({'action':'import','rows':[{'id':'dockerstudent','role':'student',**profiles}]})['credentials']
 teacher=admin.ok({'action':'issue','user':{'id':'dockerteacher','role':'instructor','profile':{**profiles,'chineseName':'测试教师'}}})
+settings['classrooms']=['A302']
 settings['windows']=[{'id':'dockerwindow','day':(now.weekday()+2)%7,'start':'18:30','end':'20:05','location':'A302','instructors':['dockerteacher'],'capacity':2,'enabled':True}]
 admin.ok({'action':'settings','settings':settings})
 student=Client();student.ok({'action':'login','id':'dockerstudent','password':credentials[0]['password']})

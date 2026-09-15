@@ -44,6 +44,7 @@ export type Settings = {
   defaultTheme: string;
   adminClasses: string[];
   teachingClasses: string[];
+  classrooms: string[];
   evaluations: Evaluation[];
   windows: Window[];
   closedDates: string[];
@@ -126,6 +127,7 @@ export const defaultSettings: Settings = {
     '26人工H二',
   ],
   teachingClasses: Array.from({ length: 16 }, (_, i) => `Class ${i + 1}`),
+  classrooms: [],
   evaluations: [
     { score: 0, en: 'Absent', zh: '缺席' },
     { score: 30, en: 'Attended · poor performance', zh: '已参加 · 表现欠佳' },
@@ -135,6 +137,25 @@ export const defaultSettings: Settings = {
   windows: [],
   closedDates: [],
 };
+// Older installations already have locations on their schedules. Keep these available on upgrade.
+export function normaliseSettings(
+  settings: Settings | Omit<Settings, 'classrooms'>,
+): Settings {
+  if ('classrooms' in settings && Array.isArray(settings.classrooms))
+    return settings;
+  return {
+    ...settings,
+    classrooms: Array.from(
+      new Set(
+        [...settings.windows, ...(settings.slotOverrides || [])]
+          .map((item) => item.location)
+          .filter(
+            (location) => typeof location === 'string' && location.trim(),
+          ),
+      ),
+    ),
+  };
+}
 export function chinaDate(now = Date.now()) {
   return new Date(now + 8 * 3600000).toISOString().slice(0, 10);
 }
@@ -249,6 +270,15 @@ export function validateSettings(s: Settings) {
     if (!Number.isInteger(s[k]) || s[k] < min || s[k] > max)
       throw Error('invalid_settings');
   }
+  if (
+    !Array.isArray(s.classrooms) ||
+    s.classrooms.length > 1000 ||
+    s.classrooms.some(
+      (room) => typeof room !== 'string' || !room.trim() || room.length > 120,
+    ) ||
+    new Set(s.classrooms).size !== s.classrooms.length
+  )
+    throw Error('invalid_classrooms');
   for (const key of ['adminClasses', 'teachingClasses'] as const) {
     if (
       !Array.isArray(s[key]) ||
@@ -296,6 +326,7 @@ export function validateSettings(s: Settings) {
   )
     throw Error('invalid_settings');
   for (const w of s.windows) {
+    if (!s.classrooms.includes(w.location)) throw Error('invalid_classroom');
     if (
       !/^[\w-]{1,50}$/.test(w.id) ||
       !Number.isInteger(w.day) ||
@@ -324,6 +355,7 @@ export function validateSettings(s: Settings) {
   )
     throw Error('invalid_settings');
   for (const o of overrides) {
+    if (!s.classrooms.includes(o.location)) throw Error('invalid_classroom');
     if (
       !/^[\w:.-]{1,100}$/.test(o.id) ||
       !/^\d{4}-\d{2}-\d{2}$/.test(o.date) ||

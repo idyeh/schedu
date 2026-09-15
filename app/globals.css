@@ -1544,7 +1544,9 @@ textarea:focus {
   font-size: 14px;
   font-weight: 500;
 }
-.settings-form {
+.settings-form,
+.data-reset-panel {
+  width: 100%;
   max-width: 950px;
 }
 .settings-form .panel > h3 {

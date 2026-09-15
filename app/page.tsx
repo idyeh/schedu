@@ -187,6 +187,14 @@ const csvCell = (s: unknown) =>
     .replaceAll('"', '""') +
   '"';
 const errorMessages: Record<string, [string, string]> = {
+  invalid_classrooms: [
+    'Enter unique classroom names, one per line (up to 120 characters each).',
+    '每行填写一个不重复的教室名称，每个名称最多 120 个字符。',
+  ],
+  invalid_classroom: [
+    'Every teaching window and individual slot must use a configured classroom. Update its classroom before removing that name from the list.',
+    '时间范围和单次时段必须使用已配置的教室。移除教室名称前，请先修改使用该教室的安排。',
+  ],
   reset_confirmation_required: [
     'Type RESET SchedU exactly to confirm.',
     '请准确输入 RESET SchedU 确认。',
@@ -926,7 +934,7 @@ export default function Home() {
                     {t('Hello,', '你好，')}
                     {lang !== 'zh-CN' ? ' ' : ''}
                     {displayName(user)}
-                    <span className="greeting-dot">.</span>
+                    <span className="greeting-dot"> .</span>
                   </h1>
                   <p>
                     {t(
@@ -2455,7 +2463,7 @@ function Stat({
     <section className="stat-card">
       <div>
         <p>{label}</p>
-        <strong>{String(value).padStart(2, '0')}</strong>
+        <strong>{value}</strong>
         <small>{note}</small>
       </div>
       <div className="stat-icon">
@@ -2873,20 +2881,27 @@ function Schedule({
                   />
                 </Field>
               </div>
-              <Field label={t('Location', '地点')}>
-                <input
+              <Field label={t('Classroom', '教室')}>
+                <Choice
+                  label={t('Choose a classroom', '选择教室')}
                   value={editing.location}
-                  maxLength={120}
-                  required
-                  placeholder={t(
-                    'e.g. Teaching Building A · Room 302',
-                    '例如：教学楼 A · 302 室',
-                  )}
-                  onChange={(e) =>
-                    setEditing({ ...editing, location: e.target.value })
-                  }
+                  disabled={busy || !settings.classrooms.length}
+                  onChange={(location) => setEditing({ ...editing, location })}
+                  options={settings.classrooms.map((value) => ({
+                    value,
+                    label: value,
+                  }))}
                 />
               </Field>
+              {!settings.classrooms.length && (
+                <p className="footnote">
+                  {t(
+                    'Add classrooms in Configuration before scheduling.',
+                    '请先在系统配置中添加教室，再安排辅导。',
+                  )}
+                </p>
+              )}
+
               <Field label={t('Students per slot', '每个时段的学生人数')}>
                 <input
                   type="number"
@@ -2965,7 +2980,12 @@ function Schedule({
                     {t('Remove', '移除')}
                   </button>
                 )}
-                <button className="primary" disabled={busy}>
+                <button
+                  className="primary"
+                  disabled={
+                    busy || !settings.classrooms.includes(editing.location)
+                  }
+                >
                   {t('Save teaching window', '保存时间安排')}
                 </button>
               </div>
@@ -2991,11 +3011,13 @@ function SettingsPage({
     [administrative, setAdministrative] = useState(
       settings.adminClasses.join('\n'),
     ),
-    [teaching, setTeaching] = useState(settings.teachingClasses.join('\n'));
+    [teaching, setTeaching] = useState(settings.teachingClasses.join('\n')),
+    [classrooms, setClassrooms] = useState(settings.classrooms.join('\n'));
   useEffect(() => {
     setS(settings);
     setAdministrative(settings.adminClasses.join('\n'));
     setTeaching(settings.teachingClasses.join('\n'));
+    setClassrooms(settings.classrooms.join('\n'));
   }, [settings]);
   return (
     <>
@@ -3017,6 +3039,10 @@ function SettingsPage({
               .map((v) => v.trim())
               .filter(Boolean),
             teachingClasses: teaching
+              .split('\n')
+              .map((v) => v.trim())
+              .filter(Boolean),
+            classrooms: classrooms
               .split('\n')
               .map((v) => v.trim())
               .filter(Boolean),
@@ -3103,6 +3129,26 @@ function SettingsPage({
               />
             </Field>
           </div>
+        </section>
+        <section className="panel">
+          <h3>{t('Classrooms', '教室')}</h3>
+          <p className="muted">
+            {t(
+              'One classroom per line. These names are used in scheduling dropdowns and timetable imports. Update schedules before removing a classroom they use.',
+              '每行一个教室名称，用于时间安排下拉选项和课表导入。移除正在使用的教室前，请先修改相关时间安排。',
+            )}
+          </p>
+          <Field label={t('Classroom list', '教室列表')}>
+            <textarea
+              className="class-list"
+              value={classrooms}
+              placeholder={t(
+                'e.g. Building A · Room 302',
+                '例如：教学楼 A · 302 室',
+              )}
+              onChange={(e) => setClassrooms(e.target.value)}
+            />
+          </Field>
         </section>
         <section className="panel">
           <div className="section-heading">

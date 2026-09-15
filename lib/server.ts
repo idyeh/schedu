@@ -1,6 +1,6 @@
 import { database, requestOrigin } from '@/db/runtime';
 export { database } from '@/db/runtime';
-import { defaultSettings } from './model';
+import { defaultSettings, normaliseSettings } from './model';
 import type { Settings, User, Booking } from './model';
 export const uuid = () => crypto.randomUUID();
 const hex = (b: ArrayBuffer) =>
@@ -70,7 +70,9 @@ export async function getSettings(): Promise<Settings> {
   const row = await database()
     .prepare('SELECT value FROM settings WHERE id=1')
     .first<{ value: string }>();
-  return row ? JSON.parse(row.value) : structuredClone(defaultSettings);
+  return row
+    ? normaliseSettings(JSON.parse(row.value))
+    : structuredClone(defaultSettings);
 }
 export async function getUser(req: Request): Promise<User | null> {
   const token = req.headers

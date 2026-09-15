@@ -12,11 +12,13 @@ import {
   availabilityDays,
   accountStatus,
   paginationItems,
+  normaliseSettings,
 } from '../lib/model.ts';
 const monday = new Date('2026-09-07T08:00:00+08:00').getTime();
 const settings = {
   ...structuredClone(defaultSettings),
   horizonDays: 1,
+  classrooms: ['A302', 'B201'],
   windows: [
     {
       id: 'monday',
@@ -168,7 +170,9 @@ test('HTTP-compatible identifiers and bilingual timetable import', () => {
     [1, 2],
   );
   assert.deepEqual(windows[0].instructors, ['teacher1', 'teacher2']);
-  assert.doesNotThrow(() => validateSettings({ ...defaultSettings, windows }));
+  assert.doesNotThrow(() =>
+    validateSettings({ ...defaultSettings, classrooms: ['A302'], windows }),
+  );
   assert.throws(
     () =>
       timetableWindows(
@@ -177,6 +181,69 @@ test('HTTP-compatible identifiers and bilingual timetable import', () => {
     /invalid_csv/,
   );
   assert.throws(() => timetableWindows('id,name\n1,A'), /invalid_csv/);
+});
+
+test('legacy settings derive a unique classroom list from windows and dated slots', () => {
+  const { classrooms, ...legacy } = structuredClone(settings);
+  legacy.slotOverrides = [
+    { ...generateSlots(settings, monday)[0], enabled: true, location: 'B201' },
+  ];
+  legacy.windows.push({ ...legacy.windows[0], id: 'same-room', day: 2 });
+  assert.deepEqual(normaliseSettings(legacy).classrooms, classrooms);
+  assert.equal('classrooms' in legacy, false);
+  assert.deepEqual(
+    normaliseSettings({ ...legacy, classrooms: [] }).classrooms,
+    [],
+  );
+  assert.deepEqual(
+    normaliseSettings({ ...legacy, windows: [], slotOverrides: [] }).classrooms,
+    [],
+  );
+});
+test('schedules and timetable imports require classrooms from the configured list', () => {
+  assert.doesNotThrow(() => validateSettings(defaultSettings));
+  for (const classrooms of [[], ['B201']]) {
+    assert.throws(
+      () => validateSettings({ ...settings, classrooms }),
+      /invalid_classroom/,
+    );
+  }
+  for (const classrooms of [
+    ['A302', 'A302'],
+    ['A302', ' '],
+    ['A302', 'x'.repeat(121)],
+  ]) {
+    assert.throws(
+      () => validateSettings({ ...settings, classrooms }),
+      /invalid_classrooms/,
+    );
+  }
+  const extra = {
+    ...generateSlots(settings, monday)[0],
+    id: 'extra-room',
+    windowId: '',
+    start: '21:00',
+    end: '21:10',
+    location: 'Unknown room',
+    enabled: true,
+  };
+  assert.throws(
+    () => validateSettings({ ...settings, slotOverrides: [extra] }),
+    /invalid_classroom/,
+  );
+  assert.doesNotThrow(() =>
+    validateSettings({
+      ...settings,
+      slotOverrides: [{ ...extra, location: 'B201' }],
+    }),
+  );
+  const windows = timetableWindows(
+    'day,instructors,start,end,location,capacity\nMonday,teacher1,18:30,20:05,Unknown room,1',
+  );
+  assert.throws(
+    () => validateSettings({ ...settings, windows }),
+    /invalid_classroom/,
+  );
 });
 
 test('phone may be omitted while class rules remain enforced', () => {
