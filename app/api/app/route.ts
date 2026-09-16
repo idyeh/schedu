@@ -32,6 +32,15 @@ import {
   validDate,
 } from '@/lib/model';
 import type { User, Profile, Settings, Booking, Slot } from '@/lib/model';
+import {
+  isManager,
+  isSysadmin,
+  canManageAccount,
+  canSetRole,
+  canEditSettings,
+  managesBooking,
+  canCancelBooking,
+} from '@/lib/permissions';
 import { migrationResetStatus } from '@/lib/migration-store';
 export const dynamic = 'force-dynamic';
 const reply = (
@@ -49,7 +58,10 @@ function fail(code: string): never {
 const validId = (id: unknown) =>
   typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{1,39}$/.test(id);
 const requireAdmin = (u: User) => {
-  if (u.role !== 'admin') fail('forbidden');
+  if (!isManager(u.role)) fail('forbidden');
+};
+const requireSysadmin = (u: User) => {
+  if (!isSysadmin(u.role)) fail('forbidden');
 };
 function cleanProfile(p: any): Profile {
   return {
@@ -91,7 +103,7 @@ async function state(req: Request) {
   }
   const staffRows = await db
     .prepare(
-      "SELECT id,profile,role FROM users WHERE role IN ('instructor','admin')",
+      "SELECT id,profile,role FROM users WHERE role IN ('instructor','admin','sysadmin')",
     )
     .all();
   const staff = staffRows.results.map((r: any) => ({
@@ -124,7 +136,7 @@ async function state(req: Request) {
   if (user.role !== 'student') {
     const rows = await db.prepare('SELECT * FROM users ORDER BY id').all();
     const all = rows.results.map(safeUser);
-    if (user.role === 'admin') users = all;
+    if (isManager(user.role)) users = all;
     bookings = bookings.map((b) => ({
       ...b,
       student: all.find((u) => u.id === b.studentId),
@@ -151,8 +163,9 @@ async function state(req: Request) {
     slots,
     serverTime: Date.now(),
     freshmanYear: currentYear(),
-    migration:
-      user.role === 'admin' ? await migrationResetStatus(db) : undefined,
+    migration: isSysadmin(user.role)
+      ? await migrationResetStatus(db)
+      : undefined,
   };
 }
 export async function GET(req: Request) {
@@ -202,7 +215,7 @@ export async function POST(req: Request) {
         const result = await db.batch([
           db
             .prepare(
-              "INSERT INTO users(id,role,password,profile,first_login,blocked_until) SELECT ?,'admin',?,?,0,0 WHERE NOT EXISTS(SELECT 1 FROM users)",
+              "INSERT INTO users(id,role,password,profile,first_login,blocked_until) SELECT ?,'sysadmin',?,?,0,0 WHERE NOT EXISTS(SELECT 1 FROM users)",
             )
             .bind(b.id, await passwordHash(b.password), JSON.stringify(p)),
           db
@@ -295,9 +308,12 @@ export async function POST(req: Request) {
     if (b.action === 'settings') {
       requireAdmin(user);
       const s = b.settings as Settings;
+      if (!s || !canEditSettings(user.role, settings, s)) fail('forbidden');
       validateSettings(s);
       const staff = await db
-        .prepare("SELECT id FROM users WHERE role IN ('instructor','admin')")
+        .prepare(
+          "SELECT id FROM users WHERE role IN ('instructor','admin','sysadmin')",
+        )
         .all();
       if (
         [...s.windows, ...(s.slotOverrides || [])].some((w) =>
@@ -343,13 +359,14 @@ export async function POST(req: Request) {
         .map((slot) => slot.id);
       const result = await db
         .prepare(`UPDATE settings SET value=? WHERE id=1 AND value=?
-        AND EXISTS (SELECT 1 FROM users WHERE id=? AND role='admin')
+        AND EXISTS (SELECT 1 FROM users WHERE id=? AND role=?)
         AND NOT EXISTS (SELECT 1 FROM bookings WHERE status IN ('submitted','approved','in_progress')
           AND ends_at>? AND slot_id IN (SELECT value FROM json_each(?)))`)
         .bind(
           JSON.stringify(s),
           settingsSnapshot.raw,
           user.id,
+          user.role,
           now,
           JSON.stringify(changed),
         )
@@ -411,13 +428,14 @@ export async function POST(req: Request) {
       // A simultaneous booking or timetable edit makes the entire operation retryable.
       const result = await db
         .prepare(`UPDATE settings SET value=? WHERE id=1 AND value=?
-        AND EXISTS (SELECT 1 FROM users WHERE id=? AND role='admin')
+        AND EXISTS (SELECT 1 FROM users WHERE id=? AND role=?)
         AND NOT EXISTS (SELECT 1 FROM bookings WHERE status IN ('submitted','approved','in_progress')
           AND slot_id IN (SELECT value FROM json_each(?)))`)
         .bind(
           JSON.stringify(updated),
           settingsSnapshot.raw,
           user.id,
+          user.role,
           JSON.stringify([...ids]),
         )
         .run();
@@ -471,22 +489,23 @@ export async function POST(req: Request) {
         );
       }
       // One statement keeps the whole import atomic and avoids per-row query limits.
-      await db
+      const imported = await db
         .prepare(`INSERT INTO users(id,role,password,profile,first_login,blocked_until)
-        SELECT json_extract(value,'$.id'), json_extract(value,'$.role'), json_extract(value,'$.password'), json_extract(value,'$.profile'), 1, 0 FROM json_each(?)`)
-        .bind(JSON.stringify(records))
+        SELECT json_extract(value,'$.id'), json_extract(value,'$.role'), json_extract(value,'$.password'), json_extract(value,'$.profile'), 1, 0 FROM json_each(?) WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND role IN ('admin','sysadmin'))`)
+        .bind(JSON.stringify(records), user.id)
         .run();
+      if (!imported.meta.changes) fail('forbidden');
       return reply({
         ok: true,
         credentials: checked.map((r) => ({ id: r.id, password: r.password })),
       });
     }
     if (b.action === 'resetData') {
-      requireAdmin(user);
+      requireSysadmin(user);
       if (b.confirmation !== 'RESET SchedU')
         fail('reset_confirmation_required');
       const row = await db
-        .prepare("SELECT password FROM users WHERE id=? AND role='admin'")
+        .prepare("SELECT password FROM users WHERE id=? AND role='sysadmin'")
         .bind(user.id)
         .first<{ password: string }>();
       if (
@@ -498,11 +517,11 @@ export async function POST(req: Request) {
         fail('incorrect_current_password');
       // Recheck the administrator inside the transaction in case access changed during password verification.
       const allowed =
-        "EXISTS (SELECT 1 FROM users actor WHERE actor.id=? AND actor.role='admin' AND actor.password=?)";
+        "EXISTS (SELECT 1 FROM users actor WHERE actor.id=? AND actor.role='sysadmin' AND actor.password=?)";
       const result = await db.batch([
         db
           .prepare(
-            "UPDATE users SET blocked_until=0 WHERE id=? AND role='admin' AND password=?",
+            "UPDATE users SET blocked_until=0 WHERE id=? AND role='sysadmin' AND password=?",
           )
           .bind(user.id, row.password),
         db
@@ -510,11 +529,11 @@ export async function POST(req: Request) {
           .bind(user.id, row.password),
         db
           .prepare(
-            `DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE role!='admin') AND ${allowed}`,
+            `DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE role!='sysadmin') AND ${allowed}`,
           )
           .bind(user.id, row.password),
         db
-          .prepare(`DELETE FROM users WHERE role!='admin' AND ${allowed}`)
+          .prepare(`DELETE FROM users WHERE role!='sysadmin' AND ${allowed}`)
           .bind(user.id, row.password),
         db
           .prepare(
@@ -539,21 +558,30 @@ export async function POST(req: Request) {
     if (b.action === 'updateUser') {
       requireAdmin(user);
       const target = await db
-        .prepare("SELECT * FROM users WHERE id=? AND role!='admin'")
+        .prepare('SELECT * FROM users WHERE id=?')
         .bind(b.id)
         .first();
-      if (!target) fail('forbidden');
+      if (!target || !canManageAccount(user.role, target.role as User['role']))
+        fail('forbidden');
       const profile = cleanProfile(b.profile);
       if (!profile.chineseName) fail('profile_incomplete');
       if (target.role === 'student') {
         const error = profileError(profile, settings);
         if (error) fail(error);
       }
-      await db
-        .prepare('UPDATE users SET profile=? WHERE id=?')
-        .bind(JSON.stringify(profile), b.id)
+      const updated = await db
+        .prepare(
+          'UPDATE users SET profile=? WHERE id=? AND role=? AND EXISTS(SELECT 1 FROM users actor WHERE actor.id=? AND actor.role=?)',
+        )
+        .bind(JSON.stringify(profile), b.id, target.role, user.id, user.role)
         .run();
+      if (!updated.meta.changes) fail('forbidden');
       return reply({ ok: true });
+    }
+    if (b.action === 'resetPassword') {
+      b.action = 'bulkUsers';
+      b.ids = [b.id];
+      b.operation = 'resetPassword';
     }
     if (b.action === 'role') {
       if (!['student', 'instructor', 'admin'].includes(b.role))
@@ -580,12 +608,13 @@ export async function POST(req: Request) {
         ].includes(b.operation)
       )
         fail('invalid_request');
+      if (b.operation === 'admin') requireSysadmin(user);
       if (b.operation === 'liftBookingPause') {
         const result = await db
           .prepare(
-            "UPDATE users SET blocked_until=0 WHERE role='student' AND blocked_until>? AND id IN (SELECT value FROM json_each(?))",
+            "UPDATE users SET blocked_until=0 WHERE role='student' AND blocked_until>? AND id IN (SELECT value FROM json_each(?)) AND EXISTS(SELECT 1 FROM users actor WHERE actor.id=? AND actor.role IN ('admin','sysadmin'))",
           )
-          .bind(now, JSON.stringify(b.ids))
+          .bind(now, JSON.stringify(b.ids), user.id)
           .run();
         return reply({ ok: true, updated: result.meta.changes });
       }
@@ -597,11 +626,13 @@ export async function POST(req: Request) {
           .bind(id)
           .first();
         if (!target) fail('forbidden');
+        if (target.role === 'sysadmin') fail('protected_sysadmin');
         if (
-          target.role === 'admin' &&
-          ['delete', 'resetPassword'].includes(b.operation)
+          !canManageAccount(user.role, target.role as User['role']) ||
+          (['student', 'instructor', 'admin'].includes(b.operation) &&
+            !canSetRole(user.role, target.role as User['role'], b.operation))
         )
-          fail('protected_admin');
+          fail('forbidden');
         if (target.role === b.operation) continue;
         if (b.operation === 'delete' || b.operation === 'student') {
           if (
@@ -640,6 +671,14 @@ export async function POST(req: Request) {
           )
             fail('active_bookings');
         }
+        // A stale permission or target role aborts the complete batch through the role constraint.
+        statements.push(
+          db
+            .prepare(
+              "UPDATE users SET role=CASE WHEN role=? AND EXISTS(SELECT 1 FROM users actor WHERE actor.id=? AND actor.role=?) THEN role ELSE 'forbidden' END WHERE id=?",
+            )
+            .bind(target.role, user.id, user.role, id),
+        );
         statements.push(
           db.prepare('DELETE FROM sessions WHERE user_id=?').bind(id),
         );
@@ -665,22 +704,6 @@ export async function POST(req: Request) {
         ok: true,
         ...(credentials.length ? { credentials } : {}),
       });
-    }
-    if (b.action === 'resetPassword') {
-      requireAdmin(user);
-      const target = await db
-        .prepare("SELECT id FROM users WHERE id=? AND role!='admin'")
-        .bind(b.id)
-        .first();
-      if (!target) fail('forbidden');
-      const password = randomPassword();
-      await db.batch([
-        db
-          .prepare('UPDATE users SET password=?,first_login=1 WHERE id=?')
-          .bind(await passwordHash(password), b.id),
-        db.prepare('DELETE FROM sessions WHERE user_id=?').bind(b.id),
-      ]);
-      return reply({ ok: true, credentials: [{ id: b.id, password }] });
     }
     if (b.action === 'draft' || b.action === 'book') {
       if (user.role !== 'student') fail('forbidden');
@@ -815,16 +838,17 @@ export async function POST(req: Request) {
       if (!row) fail('not_found');
       const booking = safeBooking(row);
       const own = user.role === 'student' && booking.studentId === user.id;
-      const staff =
-        user.role === 'admin' ||
-        (user.role === 'instructor' &&
-          (booking.slot.instructors.includes(user.id) ||
-            settings.windows
-              .find((w) => w.id === booking.slot.windowId)
-              ?.instructors.includes(user.id)));
+      const staff = managesBooking(user, booking, settings);
       if (!own && !staff) fail('forbidden');
       const target = b.status;
       if (target === 'cancelled') {
+        if (
+          user.role === 'instructor' &&
+          !settings.instructorCancellationAllowed
+        )
+          fail('instructor_cancellation_disabled');
+        if (!canCancelBooking(user, booking, settings, now))
+          fail('invalid_transition');
         if (
           !['submitted', 'approved'].includes(booking.status) ||
           (own && booking.slot.startsAt <= now)
@@ -865,7 +889,7 @@ export async function POST(req: Request) {
       const statements = [
         db
           .prepare(
-            'UPDATE bookings SET status=?,score=?,feedback=?,history=? WHERE id=? AND status=?',
+            'UPDATE bookings SET status=?,score=?,feedback=?,history=? WHERE id=? AND status=? AND EXISTS(SELECT 1 FROM users WHERE id=? AND role=?) AND (?=0 OR (SELECT value FROM settings WHERE id=1)=?)',
           )
           .bind(
             target,
@@ -878,6 +902,10 @@ export async function POST(req: Request) {
             history,
             booking.id,
             booking.status,
+            user.id,
+            user.role,
+            user.role === 'instructor' && target === 'cancelled' ? 1 : 0,
+            settingsSnapshot.raw,
           ),
       ];
       if (own && target === 'cancelled')
@@ -933,6 +961,8 @@ export async function POST(req: Request) {
       'reset_confirmation_required',
       'incorrect_current_password',
       'protected_admin',
+      'protected_sysadmin',
+      'instructor_cancellation_disabled',
       'roster_too_large',
       'invalid_roster',
       'assigned_instructor',

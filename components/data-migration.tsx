@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { Choice } from '@/components/choice';
 import { Download, Upload } from 'lucide-react';
 import {
   Dialog,
@@ -13,6 +14,10 @@ import type { migrationSummary } from '@/lib/migration-package';
 type T = (en: string, zh: string) => string;
 type Summary = ReturnType<typeof migrationSummary>;
 const messages: Record<string, [string, string]> = {
+  sysadmin_selection_required: [
+    'Choose which administrator in this older package will become the system administrator.',
+    '请选择旧版导出包中将升级为系统管理员的账号。',
+  ],
   invalid_export_package: [
     'This is not a valid SchedU export package. No data was changed.',
     '此文件不是有效的 SchedU 导出包，未更改任何数据。',
@@ -41,7 +46,10 @@ const messages: Record<string, [string, string]> = {
     'Your current password is incorrect.',
     '你的当前密码不正确。',
   ],
-  forbidden: ['Administrator access is required.', '此操作需要管理员权限。'],
+  forbidden: [
+    'System administrator access is required.',
+    '此操作需要系统管理员权限。',
+  ],
   unauthorised: [
     'Your session has expired. Sign in again.',
     '登录已过期，请重新登录。',
@@ -83,6 +91,7 @@ export function DataMigration({
     [fileName, setFileName] = useState('');
   const [pkg, setPackage] = useState<unknown>(null),
     [summary, setSummary] = useState<Summary | null>(null);
+  const [sysadminId, setSysadminId] = useState('');
   const [completed, setCompleted] = useState(false),
     [exported, setExported] = useState(false);
   const fail = (e: unknown) =>
@@ -157,6 +166,7 @@ export function DataMigration({
               if (!file) return;
               setError('');
               setSummary(null);
+              setSysadminId('');
               setPackage(null);
               setCompleted(false);
               setPassword('');
@@ -180,6 +190,12 @@ export function DataMigration({
                 const result = (await response.json()) as { summary: Summary };
                 setPackage(data);
                 setSummary(result.summary);
+                setSysadminId(
+                  result.summary.sysadmin ||
+                    (result.summary.admins.length === 1
+                      ? result.summary.admins[0]
+                      : ''),
+                );
                 await onRefresh();
               } catch (e) {
                 fail(e);
@@ -222,13 +238,13 @@ export function DataMigration({
             <DialogDescription>
               {completed
                 ? t(
-                    'Sign in with an administrator account from the exported system.',
-                    '请使用导出系统中的管理员账号登录。',
+                    'Sign in with the system administrator account from the exported system.',
+                    '请使用导出系统中的系统管理员账号登录。',
                   )
                 : mode === 'export'
                   ? t(
-                      'Confirm with your current administrator password.',
-                      '请输入当前管理员密码确认。',
+                      'Confirm with your current system administrator password.',
+                      '请输入当前系统管理员密码确认。',
                     )
                   : fileName}
             </DialogDescription>
@@ -344,12 +360,39 @@ export function DataMigration({
                       </dt>
                       <dd>{summary.admins.join(', ')}</dd>
                     </div>
+                    <div>
+                      <dt>{t('System administrator', '系统管理员')}</dt>
+                      <dd>{sysadminId || t('Select below', '请在下方选择')}</dd>
+                    </div>
                   </dl>
+                  {summary.version === 1 && !completed && (
+                    <div className="stack">
+                      <p className="footnote">
+                        {t(
+                          'This older package has no promotion history. Choose the account that will hold the sole system administrator role.',
+                          '旧版导出包没有管理员授权时间记录，请选择唯一的系统管理员账号。',
+                        )}
+                      </p>
+                      <Choice
+                        label={t(
+                          'System administrator from package',
+                          '导出包中的系统管理员',
+                        )}
+                        value={sysadminId}
+                        onChange={setSysadminId}
+                        disabled={busy}
+                        options={summary.admins.map((id) => ({
+                          value: id,
+                          label: id,
+                        }))}
+                      />
+                    </div>
+                  )}
                   {!completed && (
                     <p>
                       {t(
-                        'All destination administrator accounts will be replaced by the accounts in this package. Their existing passwords are restored. All current sessions will end.',
-                        '目标服务器的全部管理员账号将被导出包中的账号替换，并恢复导出时的密码。所有当前登录会话将结束。',
+                        'The destination system administrator will be replaced by the system administrator in the package. All accounts and their existing passwords are restored. All current sessions will end.',
+                        '目标服务器的系统管理员将被导出包中的系统管理员替换。恢复全部账号及导出时的密码，所有当前登录会话将结束。',
                       )}
                     </p>
                   )}
@@ -381,6 +424,7 @@ export function DataMigration({
                           package: pkg,
                           currentPassword: password,
                           confirmation,
+                          sysadminId,
                         });
                         setPackage(null);
                         setCompleted(true);
@@ -441,6 +485,7 @@ export function DataMigration({
                         disabled={
                           busy ||
                           !summary ||
+                          !sysadminId ||
                           !reset.ready ||
                           confirmation !== 'RESTORE SchedU' ||
                           !password

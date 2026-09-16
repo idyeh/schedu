@@ -7,6 +7,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+import { canManageAccount, isSysadmin } from '@/lib/permissions';
 import { Choice } from '@/components/choice';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
@@ -62,6 +63,7 @@ function Download({
   );
 }
 export function UserManager({
+  actor,
   users,
   now,
   t,
@@ -70,6 +72,7 @@ export function UserManager({
   act,
   renderProfile,
 }: {
+  actor: User;
   users: User[];
   now: number;
   t: T;
@@ -103,13 +106,16 @@ export function UserManager({
   const pageCount = Math.max(1, Math.ceil(visible.length / 50));
   const currentPage = Math.min(page, pageCount - 1);
   const pageUsers = visible.slice(currentPage * 50, (currentPage + 1) * 50);
-  const adminCount = users.filter((u) => u.role === 'admin').length;
-  const eligible = pageUsers.filter((u) => u.role !== 'admin').map((u) => u.id);
+  const eligible = pageUsers
+    .filter((u) => canManageAccount(actor.role, u.role))
+    .map((u) => u.id);
   const names: Record<string, string> = {
     resetPassword: t('Reset passwords', '重置密码'),
     student: t('Set role: student', '设为学生'),
     instructor: t('Set role: instructor', '设为教师'),
-    admin: t('Grant admin access', '授予管理员权限'),
+    ...(isSysadmin(actor.role)
+      ? { admin: t('Grant admin access', '授予管理员权限') }
+      : {}),
     delete: t('Delete accounts', '删除账号'),
     liftBookingPause: t('Lift booking pause', '解除预约暂停'),
   };
@@ -238,7 +244,7 @@ export function UserManager({
           {pageUsers.map((u) => (
             <TableRow key={u.id}>
               <TableCell>
-                {u.role !== 'admin' && (
+                {canManageAccount(actor.role, u.role) && (
                   <Checkbox
                     aria-label={t(`Select ${u.id}`, `选择 ${u.id}`)}
                     checked={selected.includes(u.id)}
@@ -279,7 +285,7 @@ export function UserManager({
                 <Choice
                   label={t(`Role for ${u.id}`, `${u.id} 的角色`)}
                   value={u.role}
-                  disabled={busy}
+                  disabled={busy || !canManageAccount(actor.role, u.role)}
                   onChange={(role) =>
                     setConfirm({ ids: [u.id], operation: role })
                   }
@@ -287,22 +293,32 @@ export function UserManager({
                     {
                       value: 'student',
                       label: t('Student', '学生'),
-                      disabled: u.role === 'admin' && adminCount === 1,
                     },
                     {
                       value: 'instructor',
                       label: t('Instructor', '教师'),
-                      disabled: u.role === 'admin' && adminCount === 1,
                     },
-                    { value: 'admin', label: t('Administrator', '管理员') },
+                    ...(isSysadmin(actor.role) || u.role === 'admin'
+                      ? [
+                          {
+                            value: 'admin',
+                            label: t('Administrator', '管理员'),
+                          },
+                        ]
+                      : []),
+                    ...(u.role === 'sysadmin'
+                      ? [
+                          {
+                            value: 'sysadmin',
+                            label: t('System Administrator', '系统管理员'),
+                          },
+                        ]
+                      : []),
                   ]}
                 />
-                {u.role === 'admin' && adminCount === 1 && (
+                {u.role === 'sysadmin' && (
                   <small className="table-sub">
-                    {t(
-                      'Last admin · grant another first',
-                      '唯一管理员 · 请先授权他人',
-                    )}
+                    {t('System owner · protected', '唯一系统管理员 · 受保护')}
                   </small>
                 )}
               </TableCell>
@@ -314,7 +330,7 @@ export function UserManager({
                     : t('Active', '正常')}
               </TableCell>
               <TableCell>
-                {u.role !== 'admin' && (
+                {canManageAccount(actor.role, u.role) && (
                   <div className="admin-toolbar">
                     <button
                       className="text-button"

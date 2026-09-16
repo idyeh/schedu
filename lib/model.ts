@@ -1,5 +1,5 @@
 export const maxRosterBytes = 20 * 1024 * 1024;
-export type Role = 'student' | 'instructor' | 'admin';
+export type Role = 'student' | 'instructor' | 'admin' | 'sysadmin';
 export type Status =
   | 'draft'
   | 'submitted'
@@ -40,6 +40,7 @@ export type Settings = {
   meetingMinutes: number;
   breakMinutes: number;
   cancellationWeeks: number;
+  instructorCancellationAllowed: boolean;
   maxUpcoming: number;
   horizonDays: number;
   semesterStart?: string;
@@ -113,6 +114,7 @@ export const defaultSettings: Settings = {
   meetingMinutes: 10,
   breakMinutes: 5,
   cancellationWeeks: 2,
+  instructorCancellationAllowed: false,
   maxUpcoming: 1,
   horizonDays: 28,
   semesterStart: '',
@@ -145,21 +147,28 @@ export const defaultSettings: Settings = {
 };
 // Older installations already have locations on their schedules. Keep these available on upgrade.
 export function normaliseSettings(
-  settings: Settings | Omit<Settings, 'classrooms'>,
+  settings:
+    | Settings
+    | Omit<Settings, 'classrooms' | 'instructorCancellationAllowed'>,
 ): Settings {
-  if ('classrooms' in settings && Array.isArray(settings.classrooms))
-    return settings;
   return {
     ...settings,
-    classrooms: Array.from(
-      new Set(
-        [...settings.windows, ...(settings.slotOverrides || [])]
-          .map((item) => item.location)
-          .filter(
-            (location) => typeof location === 'string' && location.trim(),
+    instructorCancellationAllowed:
+      'instructorCancellationAllowed' in settings
+        ? settings.instructorCancellationAllowed
+        : false,
+    classrooms:
+      'classrooms' in settings && Array.isArray(settings.classrooms)
+        ? settings.classrooms
+        : Array.from(
+            new Set(
+              [...settings.windows, ...(settings.slotOverrides || [])]
+                .map((item) => item.location)
+                .filter(
+                  (location) => typeof location === 'string' && location.trim(),
+                ),
+            ),
           ),
-      ),
-    ),
   };
 }
 export function chinaDate(now = Date.now()) {
@@ -357,6 +366,8 @@ export function profileError(
   return null;
 }
 export function validateSettings(s: Settings) {
+  if (typeof s.instructorCancellationAllowed !== 'boolean')
+    throw Error('invalid_settings');
   if (
     (s.semesterStart || s.semesterEnd) &&
     (!validDate(s.semesterStart) ||

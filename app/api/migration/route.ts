@@ -9,6 +9,7 @@ import {
   maxMigrationBytes,
   validateMigrationPackage,
   migrationSummary,
+  prepareRestoration,
 } from '@/lib/migration-package';
 import {
   exportAppData,
@@ -48,6 +49,7 @@ async function readBody(req: Request) {
       currentPassword?: string;
       confirmation?: string;
       package?: unknown;
+      sysadminId?: unknown;
     };
   } catch (error) {
     if (error instanceof SyntaxError) throw Error('invalid_export_package');
@@ -68,7 +70,7 @@ export async function POST(req: Request) {
       return reply({ error: 'invalid_request' }, 400);
     const user = await getUser(req);
     if (!user) return reply({ error: 'unauthorised' }, 401);
-    if (user.role !== 'admin') return reply({ error: 'forbidden' }, 403);
+    if (user.role !== 'sysadmin') return reply({ error: 'forbidden' }, 403);
     const body = await readBody(req),
       db = database();
     if (!['export', 'inspect', 'restore'].includes(body.action || ''))
@@ -81,7 +83,7 @@ export async function POST(req: Request) {
       });
     }
     const account = await db
-      .prepare("SELECT password FROM users WHERE id=? AND role='admin'")
+      .prepare("SELECT password FROM users WHERE id=? AND role='sysadmin'")
       .bind(user.id)
       .first<{ password: string }>();
     if (
@@ -109,7 +111,10 @@ export async function POST(req: Request) {
       throw Error('restore_confirmation_required');
     if (!(await migrationResetStatus(db)).ready)
       throw Error('restore_requires_reset');
-    const pkg = await validateMigrationPackage(body.package);
+    const pkg = await prepareRestoration(
+      await validateMigrationPackage(body.package),
+      body.sysadminId,
+    );
     await restoreAppData(db, pkg, user.id, account.password);
     return reply({ ok: true, summary: migrationSummary(pkg) }, 200, {
       'Set-Cookie': sessionCookie(req, '', 0),
@@ -126,6 +131,7 @@ export async function POST(req: Request) {
       'export_package_too_large',
       'restore_confirmation_required',
       'restore_requires_reset',
+      'sysadmin_selection_required',
     ];
     return reply(
       { error: known.includes(message) ? message : 'migration_failed' },

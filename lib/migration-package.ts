@@ -13,6 +13,7 @@ export type ExportUser = {
   profile: string;
   first_login: number;
   blocked_until: number;
+  admin_granted_at?: number | null;
 };
 export type ExportBooking = {
   id: string;
@@ -36,7 +37,7 @@ export type ExportData = {
 };
 export type MigrationPackage = {
   format: 'schedu-export';
-  version: 1;
+  version: 1 | 2;
   exportedAt: string;
   checksum: string;
   data: ExportData;
@@ -86,9 +87,17 @@ export async function packageChecksum(data: ExportData) {
 export async function createMigrationPackage(
   data: ExportData,
 ): Promise<MigrationPackage> {
+  data = {
+    ...data,
+    settings: normaliseSettings(data.settings),
+    users: data.users.map((user) => ({
+      ...user,
+      admin_granted_at: user.admin_granted_at ?? null,
+    })),
+  };
   return {
     format: 'schedu-export',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     checksum: await packageChecksum(data),
     data,
@@ -97,13 +106,17 @@ export async function createMigrationPackage(
 export async function validateMigrationPackage(
   value: unknown,
 ): Promise<MigrationPackage> {
-  if (object(value) && value.format === 'schedu-export' && value.version !== 1)
+  if (
+    object(value) &&
+    value.format === 'schedu-export' &&
+    ![1, 2].includes(Number(value.version))
+  )
     throw Error('unsupported_export_version');
   try {
     requireValid(
       object(value) &&
         value.format === 'schedu-export' &&
-        value.version === 1 &&
+        (value.version === 1 || value.version === 2) &&
         typeof value.exportedAt === 'string' &&
         Number.isFinite(Date.parse(value.exportedAt)) &&
         typeof value.checksum === 'string' &&
@@ -125,11 +138,17 @@ export async function validateMigrationPackage(
           id(user.id) &&
           !userIds.has(user.id) &&
           typeof user.role === 'string' &&
-          ['student', 'instructor', 'admin'].includes(user.role) &&
+          (value.version === 1
+            ? ['student', 'instructor', 'admin']
+            : ['student', 'instructor', 'admin', 'sysadmin']
+          ).includes(user.role) &&
           typeof user.password === 'string' &&
           /^[a-f0-9]{32}:[a-f0-9]{64}$/.test(user.password) &&
           integer(user.first_login, 0, 1) &&
-          integer(user.blocked_until),
+          integer(user.blocked_until) &&
+          (value.version === 1 ||
+            user.admin_granted_at === null ||
+            integer(user.admin_granted_at)),
       );
       const profile = parseRecord(user.profile);
       requireValid(
@@ -140,10 +159,18 @@ export async function validateMigrationPackage(
           text(profile.phone, 30),
       );
       userIds.add(user.id);
-      if (user.role === 'admin' || user.role === 'instructor')
+      if (
+        user.role === 'admin' ||
+        user.role === 'sysadmin' ||
+        user.role === 'instructor'
+      )
         staffIds.add(user.id);
     }
-    requireValid(data.users.some((user) => user.role === 'admin'));
+    requireValid(
+      value.version === 1
+        ? data.users.some((user) => user.role === 'admin')
+        : data.users.filter((user) => user.role === 'sysadmin').length === 1,
+    );
     const settings = normaliseSettings(data.settings as Settings);
     validateSettings(settings);
     requireValid(
@@ -232,9 +259,33 @@ export function migrationSummary(pkg: MigrationPackage) {
     exportedAt: pkg.exportedAt,
     version: pkg.version,
     users: pkg.data.users.length,
-    admins: pkg.data.users.filter((u) => u.role === 'admin').map((u) => u.id),
+    admins: pkg.data.users
+      .filter((u) => u.role === 'admin' || u.role === 'sysadmin')
+      .map((u) => u.id),
+    sysadmin: pkg.data.users.find((u) => u.role === 'sysadmin')?.id ?? null,
     bookings: pkg.data.bookings.length,
     windows: pkg.data.settings.windows.length,
     slotChanges: (pkg.data.settings.slotOverrides || []).length,
   };
+}
+
+// Version 1 exports did not contain promotion history or a system owner. Never guess between multiple admins.
+export async function prepareRestoration(
+  pkg: MigrationPackage,
+  chosenSysadmin?: unknown,
+) {
+  if (pkg.version === 2) return pkg;
+  const admins = pkg.data.users.filter((user) => user.role === 'admin');
+  const owner = admins.length === 1 ? admins[0].id : chosenSysadmin;
+  if (typeof owner !== 'string' || !admins.some((user) => user.id === owner))
+    throw Error('sysadmin_selection_required');
+  const updated = await createMigrationPackage({
+    ...pkg.data,
+    users: pkg.data.users.map((user) => ({
+      ...user,
+      role: user.id === owner ? 'sysadmin' : user.role,
+      admin_granted_at: null,
+    })),
+  });
+  return { ...updated, exportedAt: pkg.exportedAt };
 }

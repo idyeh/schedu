@@ -29,7 +29,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-For a local trial, visit `http://localhost:8080`. Use the setup token to create the first administrator account, then issue instructor accounts, import students and configure teaching windows. No default account or password is included. Setup is disabled once an account exists; the token does not grant access to an existing account.
+For a local trial, visit `http://localhost:8080`. Use the setup token to create the sole system administrator (sysadmin) account, then issue instructor accounts, import students and configure teaching windows. No default account or password is included. Setup is disabled once an account exists; the token does not grant access to an existing account.
 
 For access from another LAN computer during a trial, set `SCHEDU_BIND_ADDRESS=0.0.0.0` and set `SCHEDU_ORIGIN=http://SERVER_LAN_IP:8080` before starting. For production, use HTTPS with the institutional reverse proxy and keep the app's host binding at `127.0.0.1` when the proxy is on the same machine.
 
@@ -136,16 +136,16 @@ Before an update, take a backup. Then rebuild/load the new image and run `docker
 
 ## Moving to another server with an export package
 
-Administrators can use **Configuration → Export & restore** without direct database access. The JSON package includes all accounts and password hashes, profiles, booking restrictions, every meeting status, feedback and history, and all configuration (including semesters, classrooms, teaching windows and individual slot changes). It has a format version and an integrity checksum. Keep it private: it is not encrypted.
+Only the sysadmin can use **Configuration → Export & restore** without direct database access. The JSON package includes all accounts and password hashes, profiles, booking restrictions, every meeting status, feedback and history, and all configuration (including semesters, classrooms, teaching windows and individual slot changes). It has a format version and an integrity checksum. Keep it private: it is not encrypted.
 
-1. Update both installations to this version of SchedU or later. The new `0002_migration_packages.sql` migration runs automatically and preserves existing records. No new service, port or environment variable is required.
-2. On the source server, open **Export full dataset**, enter the current administrator password and save the package. Each export is a consistent snapshot. For the final migration, stop users making changes on the source before exporting, then keep it out of use until the destination is verified.
-3. Deploy the destination and set its own `.env`, including `SCHEDU_ORIGIN` for its new public URL and the appropriate port/bind address. Create a temporary administrator through first-time setup if this is a new installation. Environment settings and the setup token are not in the package.
-4. On the destination, use **Reset app data**. This clears existing app data while retaining the destination's administrators so they can perform the restoration. Reset is required even for a newly set-up installation. Do not edit accounts or configuration afterwards; any business-data change invalidates the reset state and requires another reset.
-5. Choose the exported JSON file. Review the record counts and the administrator IDs that will be available after restoration. Enter `RESTORE SchedU` and the current **destination** administrator password, then select **Replace data and restore**.
-6. Sign in using an administrator ID and its password from the **source** system. Verify the roster, settings and meetings, then direct users to the new URL.
+1. Update both installations to this version of SchedU or later. The `0003_sysadmin_permissions.sql` migration runs automatically and preserves existing records. No new service, port or environment variable is required.
+2. On the source server, open **Export full dataset**, enter the current sysadmin password and save the package. Each export is a consistent snapshot. For the final migration, stop users making changes on the source before exporting, then keep it out of use until the destination is verified.
+3. Deploy the destination and set its own `.env`, including `SCHEDU_ORIGIN` for its new public URL and the appropriate port/bind address. Create a temporary sysadmin through first-time setup if this is a new installation. Environment settings and the setup token are not in the package.
+4. On the destination, use **Reset app data**. This clears existing app data while retaining only the destination's sysadmin so they can perform the restoration. Reset is required even for a newly set-up installation. Do not edit accounts or configuration afterwards; any business-data change invalidates the reset state and requires another reset.
+5. Choose the exported JSON file. Review the record counts and the incoming sysadmin ID. For a version 1 package with multiple administrators, choose the sysadmin explicitly; those packages have no promotion history. Enter `RESTORE SchedU` and the current **destination** sysadmin password, then select **Replace data and restore**.
+6. Sign in using the selected sysadmin ID and its password from the **source** system. Verify the roster, settings and meetings, then direct users to the new URL.
 
-Restore replaces the complete dataset in one transaction; incremental restoration and merging are not supported. All destination administrator accounts are replaced by those in the package. Existing source passwords, first-login flags and booking pauses are preserved. Login sessions and temporary login-attempt records are excluded; all users must sign in again. A successful restore leaves the reset state, so another restoration requires another reset. Invalid packages or failed database writes leave the destination data unchanged.
+Restore replaces the complete dataset in one transaction; incremental restoration and merging are not supported. The destination sysadmin is replaced by the sysadmin in the package, alongside all other accounts. Version 2 packages must contain exactly one sysadmin. Existing source passwords, first-login flags and booking pauses are preserved. Login sessions and temporary login-attempt records are excluded; all users must sign in again. A successful restore leaves the reset state, so another restoration requires another reset. Invalid packages or failed database writes leave the destination data unchanged.
 
 Exports and uploaded packages support up to 100 MB, without a roster row-count limit. If a reverse proxy is used, allow at least 101 MB for `/api/migration` (the example above uses 110 MB). For larger datasets, use the SQLite backup-and-replacement procedure above while the destination is stopped; that is a separate operator-level procedure, not an incremental import.
 
@@ -170,20 +170,31 @@ docker compose exec app node deploy/backup.mjs
 docker compose up -d --build --wait app
 ```
 
-Startup applies `0001_keep_last_admin.sql` automatically. It protects the final administrator against role removal and deletion; existing users and bookings are preserved. No new ports, services or environment variables are needed. CSV imports support 1,200 students and larger rosters without a row-count limit; if an external reverse proxy is used, allow request bodies up to 20 MB on `/api/app`.
+Startup applies all pending migrations through `0003_sysadmin_permissions.sql` automatically. The sole sysadmin is protected against role removal and deletion; existing users and bookings are preserved. See the permission upgrade section below for the legacy administrator-selection rule. No new ports, services or environment variables are needed. CSV imports support 1,200 students and larger rosters without a row-count limit; if an external reverse proxy is used, allow request bodies up to 20 MB on `/api/app`.
 
 
 ## Clearing data after testing
 
-An administrator can open **Configuration → Reset app data** to review and clear all non-admin data. This includes every meeting, feedback record, student/instructor account, schedule and custom configuration, even if real records have already been entered. All administrator accounts and credentials are retained. The reset requires typing `RESET SchedU` and entering the administrator's current password. It does not change Docker ports, volumes or environment settings, and does not reopen first-time setup.
+The sysadmin can open **Configuration → Reset app data** to review and clear all other accounts and app data. This includes every meeting, feedback record, student/instructor account, schedule and custom configuration, even if real records have already been entered. Only the sysadmin account, credentials and profile are retained; ordinary administrator accounts are deleted too. The reset requires typing `RESET SchedU` and entering the sysadmin's current password. It does not change Docker ports, volumes or environment settings, and does not reopen first-time setup.
 
-Take an online backup using the backup commands above before confirming. Existing backup files are retained, and restoring a backup is the recovery path if a reset was unintended. Reset also clears the classroom list. The roster filtering, pagination and reset update requires rebuilding the app image; no additional database migration is needed.
+Take an online backup using the backup commands above before confirming. Existing backup files are retained, and restoring a backup is the recovery path if a reset was unintended. Reset also clears the classroom list. Rebuild the app image to receive these controls; the current release also applies the sysadmin migration described below.
 
-The classroom configuration update also requires rebuilding the app image, with no additional database migration. Existing schedule locations automatically populate Configuration → Classrooms on upgrade and are persisted when settings are saved. New installations and resets start with no classrooms; add room names before scheduling. Weekly windows, individual slots and timetable imports must use those names. Removing a classroom requires updating or removing the schedules that still reference it first.
+Classroom configuration remains part of the app image. Existing schedule locations automatically populate Configuration → Classrooms on upgrade and are persisted when settings are saved. New installations and resets start with no classrooms; add room names before scheduling. Weekly windows, individual slots and timetable imports must use those names. Removing a classroom requires updating or removing the schedules that still reference it first.
 
 
 ## Semester scheduling update
 
-Rebuild the image with the usual update command; no new migration, port or environment variable is required. In Configuration → Semester, enter the start and end dates before adding/importing new teaching windows. Existing windows are preserved and become bounded by these dates when saved. Moving a semester boundary or editing a series cannot remove or change an active booked slot.
+Rebuild the image with the usual update command. Semester scheduling adds no ports or environment variables; the current role upgrade applies its own migration. In Configuration → Semester, enter the start and end dates before adding/importing new teaching windows. Existing windows are preserved and become bounded by these dates when saved. Moving a semester boundary or editing a series cannot remove or change an active booked slot.
 
 Availability now includes calendar navigation and All semester sessions for review and batch removal beyond the 28-day view. Batch removal keeps active booked sessions, preserves all meeting history and applies no student penalty. Reset app data also clears semester dates. A full-semester selection supports up to 50,000 sessions; external reverse proxies should retain the documented 20 MB request-body allowance.
+
+
+## System administrator and permission upgrade
+
+Back up the existing database, deploy the updated source and rebuild the image with `docker compose up -d --build --wait app`. Migration `0003_sysadmin_permissions.sql` runs automatically. It replaces the old last-admin guard with a unique, protected sysadmin role and adds admin grant metadata; passwords and existing records are preserved. No ports, services or environment variables change.
+
+Older databases have no administrator promotion timestamps. The upgrade therefore promotes the earliest-created account among the current admins as a deterministic fallback; it cannot reconstruct the actual first promotion. All other admins become ordinary operational administrators. Subsequent admin grants record the first known grant time. Older version 1 export files also lack account-creation order, so restore requires choosing a sysadmin when they contain multiple admins. A version 2 export already identifies the sole sysadmin and preserves that identity.
+
+The sysadmin controls global configuration (including semester dates, class/classroom lists and teacher-cancellation permission), administrator access, reset, export and restore. Ordinary admins retain roster/timetable imports, student/instructor account management, schedule management and all meetings. They cannot change system settings or manage admin/sysadmin accounts. Teacher cancellation defaults to off on upgrade; the sysadmin can enable it for assigned bookings in Configuration → Booking rules. Staff cancellations do not penalise students.
+
+A fresh installation has one sysadmin after setup. Reset now removes **every other account, including ordinary admins**, and retains only the sysadmin. Full restoration replaces this destination sysadmin with the package's sysadmin in one transaction; normal account controls cannot delete or demote the sysadmin. Store the sysadmin credentials through the institution's existing account recovery process.

@@ -30,14 +30,14 @@ export function DataReset({
     [confirmation, setConfirmation] = useState(''),
     [password, setPassword] = useState(''),
     [attempted, setAttempted] = useState(false);
-  const admins = users.filter((u) => u.role === 'admin').length;
+  const owner = users.find((u) => u.role === 'sysadmin');
   return (
     <section className="panel data-reset-panel">
       <h3>{t('Reset app data', '重置应用数据')}</h3>
       <p>
         {t(
-          'Clear the system after testing. This permanently removes all non-admin accounts, meetings and schedules, and restores default configuration. All administrator accounts are retained.',
-          '测试结束后清空系统。将永久删除全部非管理员账号、预约及时间安排，并恢复默认配置。所有管理员账号均会保留。',
+          'Clear the system after testing. This permanently removes every account except the system administrator, all meetings and schedules, and restores default configuration.',
+          '测试结束后清空系统。将永久删除除系统管理员外的全部账号、预约及时间安排，并恢复默认配置。',
         )}
       </p>
       <button
@@ -80,8 +80,8 @@ export function DataReset({
           <ul className="reset-scope">
             <li>
               {t(
-                `Delete ${users.length - admins} student and instructor accounts and their sessions.`,
-                `删除 ${users.length - admins} 个学生、教师账号及其登录会话。`,
+                `Delete ${users.length - 1} administrator, student and instructor accounts and their sessions.`,
+                `删除 ${users.length - 1} 个普通管理员、学生、教师账号及其登录会话。`,
               )}
             </li>
             <li>
@@ -105,8 +105,8 @@ export function DataReset({
             <li>
               <strong>
                 {t(
-                  `Keep all ${admins} administrator accounts, passwords and profiles.`,
-                  `保留全部 ${admins} 个管理员账号、密码及个人资料。`,
+                  `Keep only system administrator ${owner?.id || ''}, with their password and profile.`,
+                  `仅保留系统管理员 ${owner?.id || ''} 的账号、密码及个人资料。`,
                 )}
               </strong>
             </li>

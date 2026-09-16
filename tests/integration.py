@@ -14,16 +14,15 @@ else:
     DB=DBS[0]
 with sqlite3.connect(DB) as db:
     if NODE:
-        db.execute('DROP TRIGGER IF EXISTS keep_last_admin_role')
-        db.execute('DROP TRIGGER IF EXISTS keep_last_admin_account')
+        db.execute("UPDATE app_state SET restore_token='isolated-test-fixture' WHERE id=1")
         for table in ['sessions','bookings','users','settings','attempts']:
             db.execute('DELETE FROM '+table)
+        db.execute("UPDATE app_state SET restore_token='',restore_ready=0,reset_at=NULL WHERE id=1")
     else:
         for table in ['sessions','bookings','users','settings','attempts','app_state']:
             db.execute('DROP TABLE IF EXISTS '+table)
-        db.executescript(Path('drizzle/0000_odd_karnak.sql').read_text())
-        db.executescript(Path('drizzle/0002_migration_packages.sql').read_text())
-    db.executescript(Path('drizzle/0001_keep_last_admin.sql').read_text())
+        for migration in ['0000_odd_karnak','0001_keep_last_admin','0002_migration_packages','0003_sysadmin_permissions']:
+            db.executescript(Path('drizzle/'+migration+'.sql').read_text())
 SETUP_TOKEN = os.environ.get('SCHEDU_SETUP_TOKEN','')
 class Client:
     def __init__(self):
@@ -126,7 +125,7 @@ class Flows(unittest.TestCase):
         valid=[{'id':'roster1','role':'student',**profile()},{'id':'roster2','role':'student',**profile(fresh=False)}]
         self.assertEqual(len(admin.ok({'action':'import','rows':valid})['credentials']),2)
         admin.ok({'action':'role','id':'roster1','role':'instructor'})
-        self.assertEqual(admin.call({'action':'role','id':'testadmin','role':'student'})[1]['error'],'last_admin')
+        self.assertEqual(admin.call({'action':'role','id':'testadmin','role':'student'})[1]['error'],'protected_sysadmin')
         self.assertEqual(admin.call({'action':'role','id':'teacher1','role':'student'})[1]['error'],'assigned_instructor')
         stale=Client();stale.ok({'action':'login','id':'student1','password':apass})
         a.ok({'action':'password','current':apass,'password':'a-new-secure-password'})
@@ -144,7 +143,7 @@ class Flows(unittest.TestCase):
         self.assertEqual(one.ok()['user']['profile'],updated)
         self.assertEqual(admin.call({'action':'bulkUsers','ids':['bulk1','student1'],'operation':'delete'})[1]['error'],'user_has_history')
         self.assertIsNotNone(one.ok()['user'])
-        self.assertEqual(admin.call({'action':'bulkUsers','ids':['bulk1','testadmin'],'operation':'instructor'})[1]['error'],'last_admin')
+        self.assertEqual(admin.call({'action':'bulkUsers','ids':['bulk1','testadmin'],'operation':'instructor'})[1]['error'],'protected_sysadmin')
         self.assertEqual(one.ok()['user']['role'],'student')
         admin.ok({'action':'bulkUsers','ids':['bulk1','bulk2'],'operation':'instructor'})
         self.assertIsNone(one.ok()['user'])
@@ -187,29 +186,49 @@ class Flows(unittest.TestCase):
         admin.ok({'action':'settings','settings':cfg})
         self.assertEqual(student.ok()['slots'],[])
 
-    def test_08_admin_grant_revoke_and_last_admin_race(self):
+    def test_08_sysadmin_and_admin_permission_boundaries(self):
+        self.assertEqual(admin.ok()['user']['role'],'sysadmin')
         second,password=issue('admincandidate','instructor')
         self.assertEqual(a.call({'action':'role','id':'student1','role':'admin'})[0],403)
-        self.assertEqual(admin.call({'action':'bulkUsers','ids':['testadmin'],'operation':'delete'})[1]['error'],'protected_admin')
+        self.assertEqual(admin.call({'action':'bulkUsers','ids':['testadmin'],'operation':'delete'})[1]['error'],'protected_sysadmin')
         admin.ok({'action':'role','id':'admincandidate','role':'admin'})
         self.assertIsNone(second.ok()['user'])
         second.ok({'action':'login','id':'admincandidate','password':password})
         self.assertEqual(second.ok()['user']['role'],'admin')
         self.assertTrue(second.ok()['users'])
-        # Even a bulk request that removes every admin must roll back in full.
-        self.assertEqual(admin.call({'action':'bulkUsers','ids':['admincandidate','testadmin'],'operation':'instructor'})[1]['error'],'last_admin')
+        self.assertNotIn('migration',second.ok())
+        for operation in ['student','instructor','admin','delete','resetPassword']:
+            self.assertIn(second.call({'action':'bulkUsers','ids':['testadmin'],'operation':operation})[0],[400,403])
+        self.assertEqual(second.call({'action':'role','id':'admincandidate','role':'instructor'})[0],403)
+        self.assertEqual(second.call({'action':'role','id':'student2','role':'admin'})[0],403)
+        self.assertEqual(second.call({'action':'resetPassword','id':'testadmin'})[1]['error'],'protected_sysadmin')
+        self.assertEqual(second.call({'action':'updateUser','id':'testadmin','profile':profile()})[0],403)
+        for action in ['export','inspect','restore']:
+            self.assertEqual(second.call({'action':action,'currentPassword':password},path='/api/migration')[0],403)
+        self.assertEqual(second.call({'action':'resetData','currentPassword':password,'confirmation':'RESET SchedU'})[0],403)
+        cfg=second.ok()['settings'];blocked={**cfg,'instructorCancellationAllowed':True}
+        self.assertEqual(second.call({'action':'settings','settings':blocked})[0],403)
+        blocked={**cfg,'cancellationWeeks':20}
+        self.assertEqual(second.call({'action':'settings','settings':blocked})[0],403)
+        cfg['closedDates']=[(tomorrow+datetime.timedelta(days=5)).strftime('%Y-%m-%d')]
+        second.ok({'action':'settings','settings':cfg})
+        created=second.ok({'action':'import','rows':[{'id':'daily-roster','role':'student',**profile(fresh=False)}]})
+        self.assertEqual(len(created['credentials']),1)
+        second.ok({'action':'updateUser','id':'daily-roster','profile':profile('Updated',False)})
+        second.ok({'action':'role','id':'daily-roster','role':'instructor'})
+        second.ok({'action':'bulkUsers','ids':['daily-roster'],'operation':'delete'})
+        # A batch containing the sysadmin cannot partly demote another administrator.
+        self.assertEqual(admin.call({'action':'bulkUsers','ids':['admincandidate','testadmin'],'operation':'instructor'})[1]['error'],'protected_sysadmin')
         self.assertEqual(second.ok()['user']['role'],'admin')
-        with concurrent.futures.ThreadPoolExecutor(2) as pool:
-            responses=list(pool.map(lambda pair:pair[0].call({'action':'role','id':pair[1],'role':'instructor'}),[(admin,'testadmin'),(second,'admincandidate')]))
-        self.assertEqual(sorted(r[0] for r in responses),[200,400])
-        survivor=second if responses[0][0]==200 else admin
-        self.assertEqual(len([u for u in survivor.ok()['users'] if u['role']=='admin']),1)
-        if survivor is second:
-            second.ok({'action':'role','id':'testadmin','role':'admin'})
-            admin.ok({'action':'login','id':'testadmin','password':'test-passphrase-2026'})
-            admin.ok({'action':'role','id':'admincandidate','role':'instructor'})
-        self.assertEqual(admin.ok()['user']['role'],'admin')
+        with sqlite3.connect(DB) as db:
+            granted=db.execute("SELECT admin_granted_at FROM users WHERE id='admincandidate'").fetchone()[0]
+            self.assertGreater(granted,0)
+        admin.ok({'action':'role','id':'admincandidate','role':'instructor'})
         self.assertIsNone(second.ok()['user'])
+        admin.ok({'action':'role','id':'admincandidate','role':'admin'})
+        with sqlite3.connect(DB) as db:self.assertEqual(db.execute("SELECT admin_granted_at FROM users WHERE id='admincandidate'").fetchone()[0],granted)
+        admin.ok({'action':'bulkUsers','ids':['admincandidate'],'operation':'resetPassword'})
+        admin.ok({'action':'bulkUsers','ids':['admincandidate'],'operation':'delete'})
 
     def test_09_large_roster_and_optional_phone(self):
         rows=[{'id':f'large{i:04d}','role':'student',**profile(fresh=i%2==0)} for i in range(1200)]
@@ -251,7 +270,7 @@ class Flows(unittest.TestCase):
         first.ok({'action':'book','slotId':slots[1]['id']})
         self.assertEqual(admin.ok({'action':'bulkUsers','ids':['pause1'],'operation':'liftBookingPause'})['updated'],0)
 
-    def test_11_reset_clears_all_dependants_and_retains_admins(self):
+    def test_11_reset_retains_only_sysadmin(self):
         keeper,password=issue('resetKeeper','instructor')
         admin.ok({'action':'role','id':'resetKeeper','role':'admin'})
         keeper.ok({'action':'login','id':'resetKeeper','password':password})
@@ -259,7 +278,7 @@ class Flows(unittest.TestCase):
         cfg['closedDates']=[(tomorrow+datetime.timedelta(days=1)).strftime('%Y-%m-%d')]
         cfg['slotOverrides']=[{'id':'resetextra','windowId':'','date':tomorrow.strftime('%Y-%m-%d'),'start':'21:00','end':'21:10','location':'B201','instructors':['teacher1'],'capacity':1,'enabled':True}]
         admin.ok({'action':'settings','settings':cfg})
-        before=admin.ok();admins_before=[u for u in before['users'] if u['role']=='admin']
+        before=admin.ok();admins_before=[u for u in before['users'] if u['role']=='sysadmin']
         self.assertEqual(a.call({'action':'resetData','confirmation':'RESET SchedU','currentPassword':'test-passphrase-2026'})[0],403)
         self.assertEqual(admin.call({'action':'resetData','confirmation':'RESET','currentPassword':'test-passphrase-2026'})[1]['error'],'reset_confirmation_required')
         self.assertEqual(admin.call({'action':'resetData','confirmation':'RESET SchedU','currentPassword':'wrong-password'})[1]['error'],'incorrect_current_password')
@@ -277,12 +296,12 @@ class Flows(unittest.TestCase):
         self.assertEqual(after['settings']['closedDates'],[])
         self.assertEqual(after['settings'].get('slotOverrides',[]),[])
         self.assertEqual(after['settings']['cancellationWeeks'],2)
-        self.assertEqual(keeper.ok()['user']['role'],'admin')
+        self.assertIsNone(keeper.ok()['user'])
         self.assertIsNone(a.ok()['user'])
         self.assertFalse(anon.ok()['needsSetup'])
         with sqlite3.connect(DB) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM bookings').fetchone()[0],0)
-            self.assertEqual(db.execute("SELECT count(*) FROM sessions WHERE user_id NOT IN (SELECT id FROM users WHERE role='admin')").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM sessions WHERE user_id NOT IN (SELECT id FROM users WHERE role='sysadmin')").fetchone()[0],0)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         fresh,_=issue('afterReset')
         self.assertEqual(fresh.ok()['user']['id'],'afterReset')
@@ -401,7 +420,7 @@ class Flows(unittest.TestCase):
         self.assertEqual(admin.call({'action':'inspect','package':corrupt},path=path)[1]['error'],'export_checksum_mismatch')
         self.assertEqual(admin.call({**restore,'package':corrupt},path=path)[1]['error'],'export_checksum_mismatch')
         self.assertTrue(admin.ok()['migration']['ready'])
-        self.assertEqual(admin.call({'action':'inspect','package':{**pkg,'version':2}},path=path)[1]['error'],'unsupported_export_version')
+        self.assertEqual(admin.call({'action':'inspect','package':{**pkg,'version':3}},path=path)[1]['error'],'unsupported_export_version')
         # Saving unchanged defaults still exits the explicit reset state.
         admin.ok({'action':'settings','settings':admin.ok()['settings']})
         self.assertFalse(admin.ok()['migration']['ready'])
@@ -420,5 +439,65 @@ class Flows(unittest.TestCase):
         self.assertEqual(student.ok()['user'],student_before)
         self.assertEqual(admin.call(restore,path=path)[1]['error'],'restore_requires_reset')
         self.assertFalse(anon.ok()['needsSetup'])
+
+    def test_16_teacher_cancellation_setting(self):
+        lecturer,_=issue('policyteacher','instructor');outsider,_=issue('policyoutside','instructor')
+        manager,manager_password=issue('policymanager','instructor')
+        admin.ok({'action':'role','id':'policymanager','role':'admin'})
+        manager.ok({'action':'login','id':'policymanager','password':manager_password})
+        student,_=issue('policystudent',fresh=False)
+        cfg=admin.ok()['settings']
+        self.assertFalse(cfg['instructorCancellationAllowed'])
+        for i in range(3):cfg.setdefault('slotOverrides',[]).append({'id':f'policy-{i}','windowId':'','date':tomorrow.strftime('%Y-%m-%d'),'start':f'21:{20+i*15:02d}','end':f'21:{30+i*15:02d}' if i<2 else '22:00','location':'Room 101','instructors':['policyteacher'],'capacity':1,'enabled':True})
+        admin.ok({'action':'settings','settings':cfg})
+        booked=student.ok({'action':'book','slotId':'policy-0'})
+        cancel={'action':'transition','id':booked['id'],'status':'cancelled'}
+        self.assertEqual(lecturer.call(cancel)[1]['error'],'instructor_cancellation_disabled')
+        self.assertEqual(outsider.call(cancel)[0],403)
+        cfg['instructorCancellationAllowed']=True
+        self.assertEqual(manager.call({'action':'settings','settings':cfg})[0],403)
+        admin.ok({'action':'settings','settings':cfg})
+        lecturer.ok(cancel)
+        self.assertEqual(student.ok()['user']['blockedUntil'],0)
+        self.assertEqual(next(b for b in student.ok()['bookings'] if b['id']==booked['id'])['history'][-1]['by'],'policyteacher')
+        self.assertEqual(outsider.call(cancel)[0],403)
+        cfg['instructorCancellationAllowed']=False
+        admin.ok({'action':'settings','settings':cfg})
+        booked=student.ok({'action':'book','slotId':'policy-1'})
+        manager.ok({'action':'transition','id':booked['id'],'status':'cancelled'})
+        self.assertEqual(student.ok()['user']['blockedUntil'],0)
+        booked=student.ok({'action':'book','slotId':'policy-2'})
+        student.ok({'action':'transition','id':booked['id'],'status':'cancelled'})
+        self.assertGreater(student.ok()['user']['blockedUntil'],now.timestamp()*1000)
+
+    def test_17_legacy_export_restore_with_sysadmin_selection(self):
+        import hashlib
+        path='/api/migration'
+        pkg=admin.ok({'action':'export','currentPassword':'test-passphrase-2026'},path=path)
+        self.assertEqual(pkg['version'],2)
+        pkg['version']=1
+        for user in pkg['data']['users']:
+            user.pop('admin_granted_at',None)
+            if user['role']=='sysadmin':user['role']='admin'
+        pkg['data']['settings'].pop('instructorCancellationAllowed')
+        pkg['checksum']=hashlib.sha256(json.dumps(pkg['data'],separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
+        summary=admin.ok({'action':'inspect','package':pkg},path=path)['summary']
+        self.assertIsNone(summary['sysadmin']);self.assertGreaterEqual(len(summary['admins']),2)
+        admin.ok({'action':'resetData','confirmation':'RESET SchedU','currentPassword':'test-passphrase-2026'})
+        restore={'action':'restore','package':pkg,'confirmation':'RESTORE SchedU','currentPassword':'test-passphrase-2026'}
+        self.assertEqual(admin.call(restore,path=path)[1]['error'],'sysadmin_selection_required')
+        self.assertEqual(admin.call({**restore,'sysadminId':'policystudent'},path=path)[1]['error'],'sysadmin_selection_required')
+        self.assertTrue(admin.ok()['migration']['ready'])
+        result=admin.ok({**restore,'sysadminId':'testadmin'},path=path)
+        self.assertEqual(result['summary']['sysadmin'],'testadmin')
+        self.assertEqual(result['summary']['version'],2)
+        self.assertIsNone(admin.ok()['user'])
+        admin.ok({'action':'login','id':'testadmin','password':'test-passphrase-2026'})
+        after=admin.ok()
+        self.assertEqual(after['user']['role'],'sysadmin')
+        self.assertEqual(len([u for u in after['users'] if u['role']=='sysadmin']),1)
+        self.assertEqual(len(after['users']),len(pkg['data']['users']))
+        self.assertFalse(after['settings']['instructorCancellationAllowed'])
+        self.assertFalse(after['migration']['ready'])
 
 if __name__=='__main__':unittest.main(verbosity=2)

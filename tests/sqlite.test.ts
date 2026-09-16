@@ -25,7 +25,7 @@ test('SQLite applies migrations once and preserves records across reopen', async
     assert.equal(
       (await db.prepare('SELECT count(*) AS n FROM schedu_migrations').first())
         ?.n,
-      3,
+      4,
     );
   } finally {
     db.close();
@@ -57,23 +57,42 @@ test('SQLite batches roll back every write on failure', async () => {
   }
 });
 
-test('database refuses to delete the final admin', async () => {
+test('database enforces exactly one protected system administrator', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'schedu-admin-'));
   const db = openSqlite(join(dir, 'app.sqlite'), resolve('drizzle'));
   try {
     await db
       .prepare(
-        "INSERT INTO users(id,role,password,profile) VALUES('admin','admin','hash','{}')",
+        "INSERT INTO users(id,role,password,profile) VALUES('admin','sysadmin','hash','{}')",
       )
       .run();
     await assert.rejects(
       db.prepare("DELETE FROM users WHERE id='admin'").run(),
-      /last_admin/,
+      /protected_sysadmin/,
     );
+    await assert.rejects(
+      db.prepare("UPDATE users SET role='admin' WHERE id='admin'").run(),
+      /protected_sysadmin/,
+    );
+    await assert.rejects(
+      db
+        .prepare(
+          "INSERT INTO users(id,role,password,profile) VALUES('second','sysadmin','hash','{}')",
+        )
+        .run(),
+      /UNIQUE/,
+    );
+    await db
+      .prepare(
+        "INSERT INTO users(id,role,password,profile) VALUES('ordinary','admin','hash','{}')",
+      )
+      .run();
+    await db.prepare("DELETE FROM users WHERE id='ordinary'").run();
+
     assert.equal(
       (
         await db
-          .prepare("SELECT count(*) AS n FROM users WHERE role='admin'")
+          .prepare("SELECT count(*) AS n FROM users WHERE role='sysadmin'")
           .first()
       )?.n,
       1,

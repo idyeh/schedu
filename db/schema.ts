@@ -6,14 +6,23 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
-export const users = sqliteTable('users', {
-  id: text('id').primaryKey(),
-  role: text('role').notNull(),
-  password: text('password').notNull(),
-  profile: text('profile').notNull(),
-  firstLogin: integer('first_login').notNull().default(1),
-  blockedUntil: integer('blocked_until').notNull().default(0),
-});
+export const users = sqliteTable(
+  'users',
+  {
+    id: text('id').primaryKey(),
+    role: text('role').notNull(),
+    password: text('password').notNull(),
+    profile: text('profile').notNull(),
+    firstLogin: integer('first_login').notNull().default(1),
+    blockedUntil: integer('blocked_until').notNull().default(0),
+    adminGrantedAt: integer('admin_granted_at'),
+  },
+  (t) => [
+    uniqueIndex('idx_users_single_sysadmin')
+      .on(t.role)
+      .where(sql`${t.role} = 'sysadmin'`),
+  ],
+);
 export const settings = sqliteTable('settings', {
   id: integer('id').primaryKey(),
   value: text('value').notNull(),

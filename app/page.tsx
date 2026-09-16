@@ -1,5 +1,11 @@
 'use client';
-import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type ReactNode,
+} from 'react';
 import {
   ArrowRight,
   ArrowUpRight,
@@ -36,6 +42,7 @@ import {
 } from 'lucide-react';
 import { AvailabilityCalendar } from '@/components/availability-calendar';
 import { DataReset } from '@/components/data-reset';
+import { isManager, isSysadmin, canCancelBooking } from '@/lib/permissions';
 import { DataMigration } from '@/components/data-migration';
 import { Choice } from '@/components/choice';
 import {
@@ -299,6 +306,14 @@ const errorMessages: Record<string, [string, string]> = {
     'At least one administrator must remain. Grant another account admin access first.',
     '必须保留至少一位管理员，请先授予其他账号管理员权限。',
   ],
+  protected_sysadmin: [
+    'The sole system administrator cannot be removed or changed here.',
+    '不能在此移除或更改唯一的系统管理员。',
+  ],
+  instructor_cancellation_disabled: [
+    'Teacher cancellation is disabled by the system administrator.',
+    '系统管理员未开放教师取消预约的权限。',
+  ],
   protected_admin: [
     'Revoke admin access before deleting or resetting this account.',
     '删除账号或重置密码前，请先撤销其管理员权限。',
@@ -387,10 +402,29 @@ export default function Home() {
       timeZone: 'Asia/Shanghai',
       ...options,
     }).format(ms);
+  const loadedIdentity = useRef('');
   const reload = useCallback(async () => {
     const res = await fetch('/api/app');
     const d: any = await res.json();
     if (!res.ok) throw Error(d.error || 'service_unavailable');
+    const identity = d.user ? `${d.user.id}:${d.user.role}` : '';
+    if (identity !== loadedIdentity.current) {
+      loadedIdentity.current = identity;
+      setView('dashboard');
+      setDetail(null);
+      setCancel(null);
+      setEvaluate(null);
+      setCredentials(null);
+      setImportRows(null);
+      setUserModal(false);
+      setPasswordOpen(false);
+      setConfirmBook(false);
+      setDraftId('');
+      setSlotId('');
+      setTopic('');
+      setNotice('');
+      setError('');
+    }
     setData(d);
     return d;
   }, []);
@@ -478,30 +512,31 @@ export default function Home() {
     'Sun,Mon,Tue,Wed,Thu,Fri,Sat',
     '周日,周一,周二,周三,周四,周五,周六',
   ).split(',');
-  const navigation =
-    user?.role === 'admin'
+  const navigation = isManager(user?.role)
+    ? [
+        ['dashboard', LayoutDashboard, t('Overview', '概览')],
+        ['meetings', ClipboardList, t('All meetings', '全部预约')],
+        ['schedule', CalendarDays, t('Availability', '时间安排')],
+        ['users', Users, t('People & rosters', '用户与名单')],
+        ...(isSysadmin(user?.role)
+          ? [['settings', Settings2, t('Configuration', '系统配置')]]
+          : []),
+        ['profile', UserRound, t('My profile', '个人资料')],
+      ]
+    : user?.role === 'instructor'
       ? [
           ['dashboard', LayoutDashboard, t('Overview', '概览')],
-          ['meetings', ClipboardList, t('All meetings', '全部预约')],
-          ['schedule', CalendarDays, t('Availability', '时间安排')],
-          ['users', Users, t('People & rosters', '用户与名单')],
-          ['settings', Settings2, t('Configuration', '系统配置')],
+          ['meetings', ClipboardList, t('My sessions', '我的辅导')],
+          ['feedback', MessageSquare, t('Feedback', '反馈记录')],
           ['profile', UserRound, t('My profile', '个人资料')],
         ]
-      : user?.role === 'instructor'
-        ? [
-            ['dashboard', LayoutDashboard, t('Overview', '概览')],
-            ['meetings', ClipboardList, t('My sessions', '我的辅导')],
-            ['feedback', MessageSquare, t('Feedback', '反馈记录')],
-            ['profile', UserRound, t('My profile', '个人资料')],
-          ]
-        : [
-            ['dashboard', LayoutDashboard, t('Overview', '概览')],
-            ['book', CalendarPlus, t('Book a tutorial', '预约辅导')],
-            ['meetings', ClipboardList, t('My bookings', '我的预约')],
-            ['feedback', MessageSquare, t('My feedback', '我的反馈')],
-            ['profile', UserRound, t('My profile', '个人资料')],
-          ];
+      : [
+          ['dashboard', LayoutDashboard, t('Overview', '概览')],
+          ['book', CalendarPlus, t('Book a tutorial', '预约辅导')],
+          ['meetings', ClipboardList, t('My bookings', '我的预约')],
+          ['feedback', MessageSquare, t('My feedback', '我的反馈')],
+          ['profile', UserRound, t('My profile', '个人资料')],
+        ];
   function navigate(v: string) {
     setView(v);
     setNotice('');
@@ -659,8 +694,8 @@ export default function Home() {
             <p className="muted">
               {data?.needsSetup
                 ? t(
-                    'Create the administrator account to set up your institute.',
-                    '创建管理员账号，开始配置学院的辅导安排。',
+                    'Create the sole system administrator account to set up your institute.',
+                    '创建唯一的系统管理员账号，开始配置学院的辅导安排。',
                   )
                 : t(
                     'Sign in with your institutional account.',
@@ -743,7 +778,10 @@ export default function Home() {
                   ) : (
                     <>
                       {data?.needsSetup
-                        ? t('Create administrator account', '创建管理员账号')
+                        ? t(
+                            'Create system administrator account',
+                            '创建系统管理员账号',
+                          )
                         : t('Sign in', '登录')}
                       <ArrowRight size={18} />
                     </>
@@ -776,12 +814,16 @@ export default function Home() {
       ? 'Student'
       : user.role === 'instructor'
         ? 'Instructor'
-        : 'Administrator',
+        : user.role === 'sysadmin'
+          ? 'System Administrator'
+          : 'Administrator',
     user.role === 'student'
       ? '学生'
       : user.role === 'instructor'
         ? '教师'
-        : '管理员',
+        : user.role === 'sysadmin'
+          ? '系统管理员'
+          : '管理员',
   );
   function bookingCards(list: Booking[]) {
     return list.length ? (
@@ -972,7 +1014,7 @@ export default function Home() {
                     <Plus size={18} />
                     {t('Book a tutorial', '预约辅导')}
                   </button>
-                ) : user.role === 'admin' ? (
+                ) : isManager(user.role) ? (
                   <button
                     className="primary"
                     onClick={() => navigate('schedule')}
@@ -1005,17 +1047,17 @@ export default function Home() {
                   )}
                 />
                 <Stat
-                  icon={user.role === 'admin' ? Users : MessageSquare}
+                  icon={isManager(user.role) ? Users : MessageSquare}
                   value={
-                    user.role === 'admin' ? data!.users.length : finished.length
+                    isManager(user.role) ? data!.users.length : finished.length
                   }
                   label={
-                    user.role === 'admin'
+                    isManager(user.role)
                       ? t('Institute accounts', '学院账号')
                       : t('Feedback received', '已收到反馈')
                   }
                   note={
-                    user.role === 'admin'
+                    isManager(user.role)
                       ? t(
                           'Students, instructors & admins',
                           '学生、教师与管理员',
@@ -1114,7 +1156,7 @@ export default function Home() {
                           navigate(
                             user.role === 'student'
                               ? 'book'
-                              : user.role === 'admin'
+                              : isManager(user.role)
                                 ? 'schedule'
                                 : 'meetings',
                           )
@@ -1204,7 +1246,7 @@ export default function Home() {
                       navigate(
                         user.role === 'student'
                           ? 'book'
-                          : user.role === 'admin'
+                          : isManager(user.role)
                             ? 'schedule'
                             : 'meetings',
                       )
@@ -1234,7 +1276,7 @@ export default function Home() {
                             navigate('book');
                           } else
                             navigate(
-                              user.role === 'admin' ? 'schedule' : 'meetings',
+                              isManager(user.role) ? 'schedule' : 'meetings',
                             );
                         }}
                       >
@@ -1702,7 +1744,7 @@ export default function Home() {
               </section>
             </>
           )}
-          {view === 'schedule' && user.role === 'admin' && (
+          {view === 'schedule' && isManager(user.role) && (
             <Schedule
               settings={settings}
               staff={data!.staff}
@@ -1724,7 +1766,7 @@ export default function Home() {
               onDelete={(input) => act({ action: 'deleteSlots', ...input }, '')}
             />
           )}
-          {view === 'settings' && user.role === 'admin' && (
+          {view === 'settings' && isSysadmin(user.role) && (
             <>
               <SettingsPage
                 settings={settings}
@@ -1760,15 +1802,15 @@ export default function Home() {
                   act(
                     { action: 'resetData', confirmation, currentPassword },
                     t(
-                      'App data reset. Administrator accounts were retained.',
-                      '应用数据已重置，管理员账号已保留。',
+                      'App data reset. Only the system administrator account was retained.',
+                      '应用数据已重置，仅保留系统管理员账号。',
                     ),
                   )
                 }
               />
             </>
           )}
-          {view === 'users' && user.role === 'admin' && (
+          {view === 'users' && isManager(user.role) && (
             <>
               <PageHeading
                 title={t('Your learning community.', '你的师生社区。')}
@@ -1819,6 +1861,7 @@ export default function Home() {
                 </button>
               </PageHeading>
               <UserManager
+                actor={user}
                 users={data!.users}
                 now={data!.serverTime}
                 t={t}
@@ -2072,16 +2115,11 @@ export default function Home() {
                     </button>
                   </>
                 )}
-                {['submitted', 'approved'].includes(detail.status) &&
-                  (user.role !== 'student' ||
-                    detail.slot.startsAt > Date.now()) && (
-                    <button
-                      className="danger"
-                      onClick={() => setCancel(detail)}
-                    >
-                      {t('Cancel booking', '取消预约')}
-                    </button>
-                  )}
+                {canCancelBooking(user, detail, settings, Date.now()) && (
+                  <button className="danger" onClick={() => setCancel(detail)}>
+                    {t('Cancel booking', '取消预约')}
+                  </button>
+                )}
                 {user.role !== 'student' && (
                   <>
                     {detail.status === 'submitted' && (
@@ -3296,6 +3334,40 @@ function SettingsPage({
         </section>
         <section className="panel">
           <h3>{t('Booking rules', '预约规则')}</h3>
+          <Field
+            label={t(
+              'Allow teachers to cancel assigned bookings',
+              '允许教师取消其负责的预约',
+            )}
+          >
+            <Choice
+              label={t('Teacher cancellation permission', '教师取消预约权限')}
+              value={s.instructorCancellationAllowed ? 'allowed' : 'disabled'}
+              onChange={(value) =>
+                setS({
+                  ...s,
+                  instructorCancellationAllowed: value === 'allowed',
+                })
+              }
+              options={[
+                { value: 'disabled', label: t('Disabled', '不允许') },
+                {
+                  value: 'allowed',
+                  label: t(
+                    'Allowed for assigned bookings',
+                    '允许取消负责的预约',
+                  ),
+                },
+              ]}
+            />
+          </Field>
+          <p className="footnote">
+            {t(
+              'Teacher cancellations do not pause student bookings. Students and administrators retain their existing cancellation rights.',
+              '教师取消不会暂停学生的预约权限。学生和管理员仍可按原有规则取消预约。',
+            )}
+          </p>
+
           <div className="form-grid">
             {[
               [

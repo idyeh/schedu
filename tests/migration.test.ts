@@ -9,6 +9,8 @@ import {
   createMigrationPackage,
   validateMigrationPackage,
   migrationSummary,
+  prepareRestoration,
+  packageChecksum,
 } from '../lib/migration-package.ts';
 import type {
   ExportData,
@@ -33,10 +35,11 @@ function dataset(): ExportData {
   const users: ExportUser[] = [
     {
       id: 'sourceadmin',
-      role: 'admin',
+      role: 'sysadmin',
       password: hash,
       profile,
       first_login: 0,
+      admin_granted_at: null,
       blocked_until: 0,
     },
     {
@@ -45,6 +48,7 @@ function dataset(): ExportData {
       password: hash,
       profile,
       first_login: 1,
+      admin_granted_at: null,
       blocked_until: 0,
     },
     // Deliberately collides with the destination's administrator ID.
@@ -54,6 +58,7 @@ function dataset(): ExportData {
       password: hash,
       profile,
       first_login: 1,
+      admin_granted_at: null,
       blocked_until: 1800000000000,
     },
   ];
@@ -140,7 +145,7 @@ function fixture() {
 async function resetDestination(db: ReturnType<typeof openSqlite>) {
   await db
     .prepare(
-      "INSERT INTO users(id,role,password,profile,first_login) VALUES('bootstrap','admin',?,?,0)",
+      "INSERT INTO users(id,role,password,profile,first_login) VALUES('bootstrap','sysadmin',?,?,0)",
     )
     .bind(hash, profile)
     .run();
@@ -181,7 +186,7 @@ void test('package validation rejects corruption, incompatible versions and brok
     /export_checksum_mismatch/,
   );
   await assert.rejects(
-    validateMigrationPackage({ ...pkg, version: 2 }),
+    validateMigrationPackage({ ...pkg, version: 3 }),
     /unsupported_export_version/,
   );
   for (const modify of [
@@ -189,7 +194,7 @@ void test('package validation rejects corruption, incompatible versions and brok
       data.users.push({ ...data.users[0] });
     },
     (data: ExportData) => {
-      data.users = data.users.filter((user) => user.role !== 'admin');
+      data.users = data.users.filter((user) => user.role !== 'sysadmin');
     },
     (data: ExportData) => {
       data.bookings[0].student_id = 'missing';
@@ -251,7 +256,7 @@ void test('restore replaces bootstrap administrators, preserves all data, revoke
     );
     await assert.rejects(
       db.prepare("DELETE FROM users WHERE id='sourceadmin'").run(),
-      /last_admin/,
+      /protected_sysadmin/,
     );
     assert.deepEqual(
       (await db.prepare('PRAGMA foreign_key_check').all()).results,
@@ -310,7 +315,7 @@ void test('a mid-restore database failure rolls back users, sessions, settings a
       (await db.prepare('SELECT id,role FROM users').all()).results.map(
         (row) => ({ ...row }),
       ),
-      [{ id: 'bootstrap', role: 'admin' }],
+      [{ id: 'bootstrap', role: 'sysadmin' }],
     );
     assert.equal(
       (await db.prepare('SELECT count(*) AS n FROM sessions').first())?.n,
@@ -369,4 +374,76 @@ void test('restore rechecks the reset marker and administrator credentials at wr
   } finally {
     close();
   }
+});
+
+void test('old export packages require an explicit system owner when multiple admins exist', async () => {
+  const legacyData = dataset();
+  legacyData.users[0].role = 'admin';
+  legacyData.users[1].role = 'admin';
+  for (const user of legacyData.users) delete user.admin_granted_at;
+  delete (legacyData.settings as Partial<typeof legacyData.settings>)
+    .instructorCancellationAllowed;
+  const legacy = {
+    format: 'schedu-export',
+    version: 1,
+    exportedAt: '2026-09-01T00:00:00Z',
+    checksum: await packageChecksum(legacyData),
+    data: legacyData,
+  };
+  const validated = await validateMigrationPackage(legacy);
+  assert.equal(migrationSummary(validated).sysadmin, null);
+  await assert.rejects(
+    prepareRestoration(validated),
+    /sysadmin_selection_required/,
+  );
+  await assert.rejects(
+    prepareRestoration(validated, 'bootstrap'),
+    /sysadmin_selection_required/,
+  );
+  const converted = await prepareRestoration(validated, 'teacher');
+  assert.equal(converted.version, 2);
+  assert.equal(converted.exportedAt, legacy.exportedAt);
+  assert.equal(converted.data.settings.instructorCancellationAllowed, false);
+  assert.equal(
+    converted.data.users.find((u) => u.id === 'teacher')?.role,
+    'sysadmin',
+  );
+  assert.equal(
+    converted.data.users.find((u) => u.id === 'sourceadmin')?.role,
+    'admin',
+  );
+  assert.equal(
+    converted.data.users.find((u) => u.id === 'teacher')?.admin_granted_at,
+    null,
+  );
+  await validateMigrationPackage(converted);
+  const { db, close } = fixture();
+  try {
+    await resetDestination(db);
+    await restoreAppData(db, converted, 'bootstrap', hash);
+    assert.deepEqual(
+      (await exportAppData(db, 'teacher', hash)).data.users,
+      [...converted.data.users].sort((a, b) => a.id.localeCompare(b.id)),
+    );
+    await assert.rejects(exportAppData(db, 'sourceadmin', hash), /forbidden/);
+  } finally {
+    close();
+  }
+  legacyData.users[1].role = 'instructor';
+  const single = await validateMigrationPackage({
+    ...legacy,
+    checksum: await packageChecksum(legacyData),
+  });
+  assert.equal(
+    migrationSummary(await prepareRestoration(single)).sysadmin,
+    'sourceadmin',
+  );
+});
+void test('version 2 packages reject multiple sysadmins before any replacement', async () => {
+  const data = dataset();
+  data.users[1].role = 'sysadmin';
+  await assert.rejects(
+    validateMigrationPackage(await createMigrationPackage(data)),
+    /invalid_export_package/,
+  );
 });
