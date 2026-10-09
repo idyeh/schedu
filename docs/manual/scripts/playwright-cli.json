@@ -1,0 +1,19 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "launchOptions": {
+      "headless": true,
+      "channel": "chrome"
+    },
+    "contextOptions": {
+      "viewport": {
+        "width": 1280,
+        "height": 1100
+      },
+      "deviceScaleFactor": 2,
+      "locale": "en-GB",
+      "timezoneId": "Asia/Shanghai",
+      "colorScheme": "light"
+    }
+  }
+}
