@@ -500,4 +500,40 @@ class Flows(unittest.TestCase):
         self.assertFalse(after['settings']['instructorCancellationAllowed'])
         self.assertFalse(after['migration']['ready'])
 
+    def test_18_records_follow_staff_who_approved_or_recorded(self):
+        lecturer,_=issue('recteacher','instructor');outsider,_=issue('recoutside','instructor')
+        former,former_password=issue('recformer','instructor')
+        admin.ok({'action':'role','id':'recformer','role':'admin'})
+        former.ok({'action':'login','id':'recformer','password':former_password})
+        student,_=issue('recstudent',fresh=False)
+        cfg=admin.ok()['settings']
+        if 'Room 101' not in cfg['classrooms']:cfg['classrooms'].append('Room 101')
+        day=tomorrow.strftime('%Y-%m-%d')
+        cfg.setdefault('slotOverrides',[]).extend([
+            {'id':'rec-0','windowId':'','date':day,'start':'22:10','end':'22:20','location':'Room 101','instructors':['recteacher'],'capacity':1,'enabled':True},
+            {'id':'rec-1','windowId':'','date':day,'start':'22:30','end':'22:40','location':'Room 101','instructors':[],'capacity':1,'enabled':True}])
+        admin.ok({'action':'settings','settings':cfg})
+        first=student.ok({'action':'book','slotId':'rec-0'});self.assertEqual(first['status'],'approved')
+        past=int(datetime.datetime.now().timestamp()*1000)-1200000
+        with sqlite3.connect(DB) as db:
+            slot=json.loads(db.execute('SELECT slot FROM bookings WHERE id=?',(first['id'],)).fetchone()[0]);slot['startsAt']=past;slot['endsAt']=past+600000
+            db.execute('UPDATE bookings SET starts_at=?,ends_at=?,slot=? WHERE id=?',(past,past+600000,json.dumps(slot),first['id']))
+        lecturer.ok({'action':'transition','id':first['id'],'status':'completed','score':40,'feedback':'Steady progress.'})
+        second=student.ok({'action':'book','slotId':'rec-1'});self.assertEqual(second['status'],'submitted')
+        former.ok({'action':'transition','id':second['id'],'status':'approved'})
+        # Only instructors receive the extra list; every other role's response is unchanged.
+        for client in [admin,former,student]:self.assertNotIn('activity',client.ok())
+        own=lecturer.ok();self.assertEqual(own['activity'],[]);self.assertEqual([b['id'] for b in own['bookings']],[first['id']])
+        admin.ok({'action':'role','id':'recformer','role':'instructor'})
+        former.ok({'action':'login','id':'recformer','password':former_password})
+        view=former.ok()
+        self.assertEqual(view['user']['role'],'instructor');self.assertEqual(view['bookings'],[])
+        self.assertEqual([(b['id'],b['student']['id']) for b in view['activity']],[(second['id'],'recstudent')])
+        self.assertEqual(view['activity'][0]['history'][-1]['by'],'recformer')
+        self.assertNotIn('password',json.dumps(view['activity']))
+        # Seeing a past record grants no control over it.
+        for status in ['cancelled','in_progress','archived']:self.assertEqual(former.call({'action':'transition','id':second['id'],'status':status})[0],403)
+        bystander=outsider.ok();self.assertEqual(bystander['bookings'],[]);self.assertEqual(bystander['activity'],[])
+        admin.ok({'action':'transition','id':second['id'],'status':'cancelled'})
+
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -42,6 +42,7 @@ import {
   canCancelBooking,
 } from '@/lib/permissions';
 import { migrationResetStatus } from '@/lib/migration-store';
+import { actedOn } from '@/lib/records';
 export const dynamic = 'force-dynamic';
 const reply = (
   body: unknown,
@@ -124,7 +125,10 @@ async function state(req: Request) {
           .prepare('SELECT * FROM bookings ORDER BY starts_at DESC')
           .all();
   let bookings = allRows.results.map(safeBooking);
-  if (user.role === 'instructor')
+  // Meetings an instructor approved or recorded stay in their own records after reassignment.
+  let activity: Booking[] = [];
+  if (user.role === 'instructor') {
+    const every = bookings;
     bookings = bookings.filter(
       (b) =>
         b.slot.instructors.includes(user.id) ||
@@ -132,15 +136,20 @@ async function state(req: Request) {
           .find((w) => w.id === b.slot.windowId)
           ?.instructors.includes(user.id),
     );
+    const assigned = new Set(bookings.map((b) => b.id));
+    activity = every.filter((b) => !assigned.has(b.id) && actedOn(b, user.id));
+  }
   let users: User[] = [];
   if (user.role !== 'student') {
     const rows = await db.prepare('SELECT * FROM users ORDER BY id').all();
     const all = rows.results.map(safeUser);
     if (isManager(user.role)) users = all;
-    bookings = bookings.map((b) => ({
+    const withStudent = (b: Booking) => ({
       ...b,
       student: all.find((u) => u.id === b.studentId),
-    }));
+    });
+    bookings = bookings.map(withStudent);
+    activity = activity.map(withStudent);
   }
   const counts = await db
     .prepare(
@@ -159,6 +168,7 @@ async function state(req: Request) {
     settings,
     staff,
     bookings,
+    ...(user.role === 'instructor' ? { activity } : {}),
     users,
     slots,
     serverTime: Date.now(),

@@ -1,0 +1,27 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "schedu-manual-demo",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["docs/manual/scripts/serve-demo.py"],
+      "port": 3004,
+      "url": "http://127.0.0.1:3004"
+    },
+    {
+      "name": "schedu-integration",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "SCHEDU_ORIGIN=http://localhost:3002",
+        "SCHEDU_SETUP_TOKEN=isolated-integration-fixture-token-2026",
+        "SCHEDU_DB_PATH=/private/tmp/schedu-node-integration/schedu.sqlite",
+        "SCHEDU_MIGRATIONS_DIR=drizzle",
+        "PORT=3002",
+        "HOST=127.0.0.1",
+        "node",
+        "dist/standalone/server.js"
+      ],
+      "port": 3002
+    }
+  ]
+}

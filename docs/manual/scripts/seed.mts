@@ -19,7 +19,8 @@ const settings:Settings={...structuredClone(defaultSettings),defaultLanguage:'en
  {id:'monday-clinic',day:1,start:'19:00',end:'20:05',location:'Learning Centre · Room 105',instructors:['STAFF1001'],capacity:1,enabled:true,startWeek:1},
  {id:'tuesday-clinic',day:2,start:'18:30',end:'20:05',location:'Engineering Building · Room 302',instructors:['STAFF1001','STAFF1002'],capacity:2,enabled:true,startWeek:1},
  {id:'thursday-clinic',day:4,start:'19:00',end:'20:05',location:'Learning Centre · Room 105',instructors:['STAFF1002'],capacity:1,enabled:true,startWeek:1},
-],closedDates:['2026-10-11'],slotOverrides:[{id:'extra-unstaffed',windowId:'',date:'2026-10-07',start:'19:00',end:'19:10',location:'Learning Centre · Room 105',instructors:[],capacity:1,enabled:true}]};
+],closedDates:['2026-10-11'],slotOverrides:[{id:'extra-unstaffed',windowId:'',date:'2026-10-07',start:'19:00',end:'19:10',location:'Learning Centre · Room 105',instructors:[],capacity:1,enabled:true},
+ {id:'thursday-clinic_2026-10-08_19:00',windowId:'thursday-clinic',date:'2026-10-08',start:'19:00',end:'19:10',location:'Learning Centre · Room 105',instructors:[],capacity:1,enabled:true}]};
 validateSettings(settings);
 const people=[
  ['OWNER0001','sysadmin','系统管理员','System Administrator',2015,'','',0,0],
@@ -42,15 +43,16 @@ const profile=(u:any[])=>JSON.stringify({chineseName:u[2],englishName:u[3],grade
 const slots=slotsInRange(settings,'2026-09-07','2027-01-15');
 const find=(date:string,start:string)=>{const slot=slots.find(s=>s.date===date&&s.start===start);if(!slot)throw Error(`Missing ${date} ${start}`);return slot;};
 const records:any[]=[];
-function book(id:string,student:string,status:string,slot:Slot,seat:number,topic:string,score:number|null=null,feedback=''){
- const created=slot.startsAt-2*86400000;
+// The defaults describe a staffed slot handled by STAFF1001; `o` names another member of staff, a personal approval or a cancellation.
+function book(id:string,student:string,status:string,slot:Slot,seat:number,topic:string,score:number|null=null,feedback='',o:{staff?:string;approver?:string;cancelled?:{at:number;by:string};created?:number}={}){
+ const created=o.created??slot.startsAt-2*86400000,staff=o.staff??'STAFF1001';
  const history=[{status:'draft',at:created,by:student}];
  if(status!=='draft') history.push({status:'submitted',at:created+60000,by:student});
- if(!['draft','submitted'].includes(status))history.push({status:'approved',at:created+61000,by:'system'});
- if(['in_progress','completed','archived'].includes(status))history.push({status:'in_progress',at:slot.startsAt,by:'STAFF1001'});
- if(['completed','archived'].includes(status))history.push({status:'completed',at:slot.endsAt+60000,by:'STAFF1001'});
- if(status==='archived')history.push({status:'archived',at:slot.endsAt+3600000,by:'STAFF1001'});
- if(status==='cancelled')history.push({status:'cancelled',at:now,by:student});
+ if(!['draft','submitted'].includes(status))history.push(o.approver?{status:'approved',at:created+86400000,by:o.approver}:{status:'approved',at:created+61000,by:'system'});
+ if(['in_progress','completed','archived'].includes(status))history.push({status:'in_progress',at:slot.startsAt,by:staff});
+ if(['completed','archived'].includes(status))history.push({status:'completed',at:slot.endsAt+60000,by:staff});
+ if(status==='archived')history.push({status:'archived',at:slot.endsAt+3600000,by:staff});
+ if(status==='cancelled')history.push({status:'cancelled',at:o.cancelled?.at??now,by:o.cancelled?.by??student});
  records.push({id,student,status,slot,seat,topic,score,feedback,history,created});
 }
 book('mei-feedback','20260001','completed',find('2026-09-29','18:30'),0,'Applying Kirchhoff’s laws to a two-loop circuit',70,'You chose the current directions consistently and checked both loop equations. Next, practise a circuit with a dependent source and explain each sign before calculating.');
@@ -64,6 +66,23 @@ book('future-tuesday','20260008','approved',find('2026-10-06','18:45'),0,'Workin
 book('pending-approval','20260009','submitted',slots.find(s=>s.id==='extra-unstaffed')!,0,'Choosing a method for circuit analysis');
 book('paused-student','20250003','cancelled',find('2026-10-06','19:00'),0,'Reviewing laboratory measurements');
 book('past-absent','20260010','completed',find('2026-09-29','18:45'),1,'Preparing for the next laboratory session',0,'No attendance recorded for this tutorial.');
+// Thursday tutorials belong to STAFF1002 alone, so the records above stay as the other screenshots show them.
+const zhou={staff:'STAFF1002'};
+const unstaffed=(slot:Slot)=>({...slot,instructors:[]});
+book('qi-first','20260005','completed',find('2026-09-10','19:00'),0,'Describing a bar chart in the past tense',30,'You described the main trend. The tenses moved between past and present; rewrite the paragraph in the past simple before your next tutorial.',zhou);
+book('qi-cancelled','20260005','cancelled',find('2026-09-17','19:15'),0,'Linking words for contrast',null,'',{cancelled:{at:Date.parse('2026-09-14T10:20:00+08:00'),by:'STAFF0001'},created:Date.parse('2026-09-11T12:05:00+08:00')});
+book('qi-absent','20260005','completed',find('2026-09-17','19:00'),0,'Linking words for contrast',0,'No attendance recorded for this tutorial.',zhou);
+book('qi-strong','20260005','completed',unstaffed(find('2026-09-24','19:00')),0,'Structuring the introduction of a discussion essay',70,'A clear thesis and a well-organised outline. Next, vary your linking words and keep each paragraph to one main idea.',{...zhou,approver:'STAFF1002'});
+book('qi-next','20260005','submitted',find('2026-10-08','19:00'),0,'Paraphrasing a source without changing its meaning',null,'',{created:now-20*60000});
+book('zhou-stress','20260011','completed',find('2026-09-10','19:15'),0,'Word stress in academic vocabulary',40,'Stress was accurate on familiar words. Practise the ten-word list aloud and record yourself.',zhou);
+book('zhou-summary','20260012','completed',find('2026-09-10','19:30'),0,'Summarising a short lecture',70,'An accurate, concise summary in your own words. Try a longer talk next.',zhou);
+book('zhou-articles','20260013','archived',find('2026-09-17','19:15'),0,'Using articles with countable nouns',40,'Most articles were correct. Review the cases with uncountable nouns.',zhou);
+book('zhou-introduction','20260014','completed',find('2026-09-17','19:30'),0,'Preparing a two-minute self-introduction',30,'The content was relevant but hard to follow. Write three short sentences for each point and practise the timing.',zhou);
+book('zhou-opinion','20260011','completed',find('2026-09-24','19:15'),0,'Giving an opinion with supporting reasons',70,'Confident delivery and clear reasons. Add one example for each reason.',zhou);
+book('zhou-withdrawn','20260015','cancelled',find('2026-09-24','19:30'),0,'Checking an email to a lecturer',null,'',{cancelled:{at:Date.parse('2026-09-23T08:40:00+08:00'),by:'20260015'}});
+// A one-off slot that an administrator approved and recorded; it is no longer on the timetable.
+const former=Date.parse('2026-09-30T19:00:00+08:00');
+book('admin-recorded','20260016','completed',{id:'extra-september',windowId:'',date:'2026-09-30',start:'19:00',end:'19:10',startsAt:former,endsAt:former+600000,location:'Learning Centre · Room 105',instructors:[],capacity:1,remaining:1},0,'Reading a journal abstract',40,'You found the aim and the result. Note unfamiliar terms before reading the full paper.',{staff:'STAFF0001',approver:'STAFF0001'});
 await db.batch([
  db.prepare("UPDATE app_state SET restore_token='manual-fixture' WHERE id=1"),
  ...['sessions','bookings','users','settings','attempts'].map(table=>db.prepare(`DELETE FROM ${table}`)),

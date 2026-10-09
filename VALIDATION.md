@@ -9,11 +9,25 @@
 
 ## Running checks
 
-`node --test tests/model.test.ts`
+`node --test tests/model.test.ts tests/permissions.test.ts tests/sqlite.test.ts tests/migration.test.ts tests/records.test.ts`
 
 `npx tsc --noEmit`
 
 For workflow checks, build the app and start an isolated Worker on port 3001 with persistence at `/private/tmp/schedu-integration-state`. Request `/api/app` once to create the local database, then run `python3 tests/integration.py`. The script resets only that isolated test database and must never be aimed at production.
+
+For the self-hosted build, run `npm run build:docker`, start `dist/standalone/server.js` on port 3002 with `SCHEDU_ORIGIN=http://localhost:3002`, a `SCHEDU_SETUP_TOKEN` of at least 32 characters, `SCHEDU_DB_PATH=/private/tmp/schedu-node-integration/schedu.sqlite` and `SCHEDU_MIGRATIONS_DIR=drizzle`. Request `/api/health` once, then run `SCHEDU_TEST_NODE=1 SCHEDU_SETUP_TOKEN=<same token> python3 tests/integration.py`.
+
+## Records and statistics
+
+Checked on 10 October 2026 against local builds only. No deployed server or production database was used.
+
+- `node --test tests/records.test.ts`: nine checks of the calculations behind the new pages. They cover outcomes for every booking status, archived meetings that were completed or cancelled, the five approval outcomes, pool membership matching the staff permission rule, attendance rate and average mark, empty accounts, marks recorded under a removed evaluation option, crediting of guidance, and institute totals that add up across statuses, approval outcomes and students.
+- All 43 unit tests pass (`tests/model.test.ts`, `permissions.test.ts`, `sqlite.test.ts`, `migration.test.ts`, `records.test.ts`). `npx tsc --noEmit` passes. `npx oxlint` reports nothing in the new files; the findings it reports in existing files are unchanged.
+- All 18 workflow groups pass against an isolated self-hosted build: the 17 existing groups unchanged, plus one for the single server addition. That group checks that an instructor keeps meetings they approved or recorded after reassignment, that this grants no control over those meetings, and that other roles' responses are unchanged.
+- Existing screens: with the previous sample data, the seven existing screenshot phases ran against the new build and reproduced 25 of the 26 existing screenshots byte for byte. The remaining one differed only by a keyboard focus ring caused by capture timing, which the script now avoids. With the extended sample data, two screenshots change as intended (one Thursday slot is now taken by a waiting request).
+- New screens: the `records` phase captures the nine screenshots used in the manual. The `records-qa` phase checks filters, pagination, search, the details dialog, the chart tooltip, empty states, Simplified Chinese, the dark theme and a 390 px phone width without sideways scrolling. It ends by approving a waiting request as an instructor and confirming the record in the instructor's, the student's and the administrator's views. Its screenshots are in `output/screenshots/records-statistics/`.
+- Statistics shown for the sample data were compared with a hand count of the fixture's bookings.
+- Not tested: the hosted Cloudflare Worker build, the Docker image, and rosters larger than the 68-account fixture for these pages.
 
 ## Self-hosted Docker deployment
 

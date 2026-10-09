@@ -1,3 +1,34 @@
+# Manual review — edition 2, 10 October 2026
+
+Edition 2 adds six pages for the records and statistics features. The manual now has 24 A4 pages, 25 embedded screenshots, three explanatory diagrams and 24 PDF bookmarks. The PDF language is `en-GB`.
+
+## What changed
+
+- Students: Follow your learning profile; Review your appointment history.
+- Instructors: Check your approval history; Review your guidance history.
+- Administrators: Read the statistics; Open student and teacher records.
+- The cover, contents, the profile page and the common-problems table refer to the new pages. The contents table and the common-problems table are set slightly tighter to stay on one page each.
+
+## Accuracy
+
+The new text was checked against `lib/records.ts`, `components/records.tsx` and the instructor part of `app/api/app/route.ts` in the working tree based on commit `c8d876715071883fca5733048c2dfa528cb5baa1`. The checks covered which bookings count as appointments, attended and absent marks, the attendance rate and average mark, the six approval outcomes, how a tutorial is credited to a member of staff, which requests and sessions each instructor sees, page sizes, and who appears in the teacher list. Figures quoted in captions were read from the screenshots and compared with a count taken directly from the fixture database.
+
+## Reproduction
+
+The app was built with `npm run build:docker` and served from a fresh fixture of 68 fictional accounts and 23 bookings. All nine phases completed in order: open, student, first-login, instructor, admin, schedule, records, records-qa and close. Thirty-five screenshot assets are retained; ten are supplementary views not used in the PDF.
+
+Of the 26 screenshots from edition 1, 24 were reproduced byte for byte by the new build. Two changed as intended: the availability calendar and the student overview each show three free Thursday slots where there were four, because the fixture now includes a request waiting on that day. In one intermediate run a third capture differed from the committed file by 24 anti-aliased pixels; the final run reproduced it exactly. The record-feedback capture previously depended on focus timing; the script now removes focus from the text box before capturing, which reproduces the committed image.
+
+No live server or production database was used.
+
+## Visual and document checks
+
+The source compiled twice with XeLaTeX without overfull boxes, missing glyphs or unresolved references. `check-layout.py` reported 24 pages, no text outside the page bounds and no replacement characters. A first build ran to 28 pages with four short spill pages; the contents table, the learning-profile page, the appointment-history page and the common-problems table were tightened to remove them.
+
+Every page was rendered at 150 dpi and reviewed in contact sheets. The seven pages with new or changed layout (8, 9, 12, 13, 22, 23 and 24) were also read at full size.
+
+The edition 1 review follows unchanged.
+
 # Manual review — 4 October 2026
 
 The released manual contains 18 A4 pages, 18 embedded screenshots, three explanatory diagrams and 18 PDF bookmarks. The contents page has working internal destinations for every topic; cross-references also resolve. The PDF language is `en-GB`.

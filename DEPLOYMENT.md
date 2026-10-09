@@ -189,6 +189,17 @@ Rebuild the image with the usual update command. Semester scheduling adds no por
 Availability now includes calendar navigation and All semester sessions for review and batch removal beyond the 28-day view. Batch removal keeps active booked sessions, preserves all meeting history and applies no student penalty. Reset app data also clears semester dates. A full-semester selection supports up to 50,000 sessions; external reverse proxies should retain the documented 20 MB request-body allowance.
 
 
+## Records and statistics update
+
+Back up the database, copy the updated source into the deployment directory and rebuild with the usual command:
+
+```sh
+docker compose exec app node deploy/backup.mjs
+docker compose up -d --build --wait app
+```
+
+This update adds no migration, port, service or environment variable, and it does not change the format of existing data. The learning profile, appointment history, approval history, guidance history and Statistics pages are calculated from the bookings and status histories already in the database, so records from before the update appear as soon as users reload the page. Booking, approval, cancellation and feedback rules are unchanged. If a rollback is needed, start the previous image against the same volume; no data conversion is involved.
+
 ## System administrator and permission upgrade
 
 Back up the existing database, deploy the updated source and rebuild the image with `docker compose up -d --build --wait app`. Migration `0003_sysadmin_permissions.sql` runs automatically. It replaces the old last-admin guard with a unique, protected sysadmin role and adds admin grant metadata; passwords and existing records are preserved. No ports, services or environment variables change.

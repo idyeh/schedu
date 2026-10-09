@@ -39,12 +39,26 @@ import {
   Info,
   LockKeyhole,
   LoaderCircle,
+  ChartColumn,
 } from 'lucide-react';
 import { AvailabilityCalendar } from '@/components/availability-calendar';
 import { DataReset } from '@/components/data-reset';
-import { isManager, isSysadmin, canCancelBooking } from '@/lib/permissions';
+import {
+  isManager,
+  isSysadmin,
+  canCancelBooking,
+  managesBooking,
+} from '@/lib/permissions';
 import { DataMigration } from '@/components/data-migration';
 import { Choice } from '@/components/choice';
+import {
+  Empty,
+  PageHeading,
+  Stat,
+  Status,
+  labels,
+  type T,
+} from '@/components/shared';
 import {
   Dialog,
   DialogContent,
@@ -88,6 +102,12 @@ import {
   SlotManager,
 } from '@/components/admin-tools';
 import { SemesterSessions } from '@/components/semester-sessions';
+import {
+  StudentRecords,
+  StaffRecords,
+  Statistics,
+  type RecordsContext,
+} from '@/components/records';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
@@ -123,12 +143,12 @@ type Data = {
   settings: Settings;
   staff: { id: string; name: string; englishName: string; role: string }[];
   bookings: Booking[];
+  activity?: Booking[];
   users: User[];
   slots: Slot[];
   serverTime: number;
   freshmanYear: number;
 };
-type T = (en: string, zh: string) => string;
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label>
@@ -143,46 +163,6 @@ function Brand() {
       <span className="brand-mark" aria-hidden="true" />
       Sched<span className="brand-u">U</span>
     </a>
-  );
-}
-function Empty({
-  icon: Icon = CalendarDays,
-  title,
-  body,
-  children,
-}: {
-  icon?: typeof CalendarDays;
-  title: string;
-  body: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="empty-state">
-      <div className="empty-icon">
-        <Icon size={25} />
-      </div>
-      <h3>{title}</h3>
-      <p>{body}</p>
-      {children}
-    </div>
-  );
-}
-const labels: Record<string, [string, string]> = {
-  draft: ['Draft', '草稿'],
-  submitted: ['Awaiting approval', '待审批'],
-  approved: ['Approved', '已批准'],
-  in_progress: ['In progress', '进行中'],
-  completed: ['Completed', '已完成'],
-  cancelled: ['Cancelled', '已取消'],
-  archived: ['Archived', '已归档'],
-};
-function Status({ value, t }: { value: string; t: T }) {
-  const l = labels[value] || [value, value];
-  return (
-    <span className={`status ${value}`}>
-      <span />
-      {t(l[0], l[1])}
-    </span>
   );
 }
 function download(name: string, contents: string) {
@@ -460,7 +440,10 @@ export default function Home() {
     document.documentElement.lang = lang;
   }, [lang]);
   useEffect(() => {
-    if (!data?.user || !['dashboard', 'meetings', 'feedback'].includes(view))
+    if (
+      !data?.user ||
+      !['dashboard', 'meetings', 'feedback', 'statistics'].includes(view)
+    )
       return;
     const id = setInterval(() => reload().catch(() => {}), 60000);
     return () => clearInterval(id);
@@ -508,6 +491,10 @@ export default function Home() {
     const s = data?.staff?.find((s) => s.id === id);
     return s ? (lang === 'zh-CN' ? s.name : s.englishName) : id;
   };
+  const personName = (id: string) => {
+    const known = data?.users?.find((u) => u.id === id);
+    return known ? displayName(known) : staffName(id);
+  };
   const days = t(
     'Sun,Mon,Tue,Wed,Thu,Fri,Sat',
     '周日,周一,周二,周三,周四,周五,周六',
@@ -518,6 +505,7 @@ export default function Home() {
         ['meetings', ClipboardList, t('All meetings', '全部预约')],
         ['schedule', CalendarDays, t('Availability', '时间安排')],
         ['users', Users, t('People & rosters', '用户与名单')],
+        ['statistics', ChartColumn, t('Statistics', '数据统计')],
         ...(isSysadmin(user?.role)
           ? [['settings', Settings2, t('Configuration', '系统配置')]]
           : []),
@@ -541,6 +529,7 @@ export default function Home() {
     setView(v);
     setNotice('');
     setError('');
+    if (v === 'statistics') reload().catch(() => {});
   }
   function startBooking(s?: Slot) {
     if (s) {
@@ -825,6 +814,16 @@ export default function Home() {
           ? '系统管理员'
           : '管理员',
   );
+  const records: RecordsContext = {
+    settings,
+    now: data!.serverTime,
+    lang,
+    t,
+    dateText,
+    displayName,
+    personName,
+    onOpen: setDetail,
+  };
   function bookingCards(list: Booking[]) {
     return list.length ? (
       <div className="booking-list">
@@ -1742,7 +1741,25 @@ export default function Home() {
                   </button>
                 </div>
               </section>
+              {user.role === 'student' && (
+                <div className="profile-records">
+                  <StudentRecords bookings={bookings} c={records} />
+                </div>
+              )}
+              {user.role === 'instructor' && (
+                <div className="profile-records">
+                  <StaffRecords
+                    staffId={user.id}
+                    bookings={[...bookings, ...(data!.activity || [])]}
+                    self
+                    c={records}
+                  />
+                </div>
+              )}
             </>
+          )}
+          {view === 'statistics' && isManager(user.role) && (
+            <Statistics users={data!.users} bookings={bookings} c={records} />
           )}
           {view === 'schedule' && isManager(user.role) && (
             <Schedule
@@ -2120,28 +2137,67 @@ export default function Home() {
                     {t('Cancel booking', '取消预约')}
                   </button>
                 )}
-                {user.role !== 'student' && (
-                  <>
-                    {detail.status === 'submitted' && (
-                      <button
-                        className="primary"
-                        disabled={busy}
-                        onClick={async () => {
-                          if (
-                            await act({
-                              action: 'transition',
-                              id: detail.id,
-                              status: 'approved',
-                            })
-                          )
-                            setDetail(null);
-                        }}
-                      >
-                        {t('Approve', '批准')}
-                      </button>
-                    )}
-                    {detail.status === 'approved' &&
-                      detail.slot.startsAt <= Date.now() && (
+                {user.role !== 'student' &&
+                  managesBooking(user, detail, settings) && (
+                    <>
+                      {detail.status === 'submitted' && (
+                        <button
+                          className="primary"
+                          disabled={busy}
+                          onClick={async () => {
+                            if (
+                              await act({
+                                action: 'transition',
+                                id: detail.id,
+                                status: 'approved',
+                              })
+                            )
+                              setDetail(null);
+                          }}
+                        >
+                          {t('Approve', '批准')}
+                        </button>
+                      )}
+                      {detail.status === 'approved' &&
+                        detail.slot.startsAt <= Date.now() && (
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={async () => {
+                              if (
+                                await act({
+                                  action: 'transition',
+                                  id: detail.id,
+                                  status: 'in_progress',
+                                })
+                              )
+                                setDetail(null);
+                            }}
+                          >
+                            {t('Start session', '开始辅导')}
+                          </button>
+                        )}
+                      {['approved', 'in_progress'].includes(detail.status) &&
+                        detail.slot.startsAt <= Date.now() && (
+                          <button
+                            className="primary"
+                            onClick={() => {
+                              setEvaluate(detail);
+                              setScore(
+                                String(
+                                  settings.evaluations.find(
+                                    (e) => e.score === 40,
+                                  )?.score ?? settings.evaluations[0].score,
+                                ),
+                              );
+                              setFeedback('');
+                              setDetail(null);
+                            }}
+                          >
+                            {t('Record feedback', '记录反馈')}
+                          </button>
+                        )}
+                      {['completed', 'cancelled'].includes(detail.status) && (
                         <button
                           className="secondary"
                           disabled={busy}
@@ -2150,54 +2206,17 @@ export default function Home() {
                               await act({
                                 action: 'transition',
                                 id: detail.id,
-                                status: 'in_progress',
+                                status: 'archived',
                               })
                             )
                               setDetail(null);
                           }}
                         >
-                          {t('Start session', '开始辅导')}
+                          {t('Archive', '归档')}
                         </button>
                       )}
-                    {['approved', 'in_progress'].includes(detail.status) &&
-                      detail.slot.startsAt <= Date.now() && (
-                        <button
-                          className="primary"
-                          onClick={() => {
-                            setEvaluate(detail);
-                            setScore(
-                              String(
-                                settings.evaluations.find((e) => e.score === 40)
-                                  ?.score ?? settings.evaluations[0].score,
-                              ),
-                            );
-                            setFeedback('');
-                            setDetail(null);
-                          }}
-                        >
-                          {t('Record feedback', '记录反馈')}
-                        </button>
-                      )}
-                    {['completed', 'cancelled'].includes(detail.status) && (
-                      <button
-                        className="secondary"
-                        disabled={busy}
-                        onClick={async () => {
-                          if (
-                            await act({
-                              action: 'transition',
-                              id: detail.id,
-                              status: 'archived',
-                            })
-                          )
-                            setDetail(null);
-                        }}
-                      >
-                        {t('Archive', '归档')}
-                      </button>
-                    )}
-                  </>
-                )}
+                    </>
+                  )}
               </div>
             </>
           )}
@@ -2497,49 +2516,6 @@ export default function Home() {
         </DialogContent>
       </Dialog>
     </SidebarProvider>
-  );
-}
-function PageHeading({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="page-heading">
-      <div>
-        <h1>{title}</h1>
-        <p>{description}</p>
-      </div>
-      {children && <div className="heading-actions">{children}</div>}
-    </div>
-  );
-}
-function Stat({
-  icon: Icon,
-  value,
-  label,
-  note,
-}: {
-  icon: typeof CalendarDays;
-  value: number;
-  label: string;
-  note: string;
-}) {
-  return (
-    <section className="stat-card">
-      <div>
-        <p>{label}</p>
-        <strong>{value}</strong>
-        <small>{note}</small>
-      </div>
-      <div className="stat-icon">
-        <Icon size={21} />
-      </div>
-    </section>
   );
 }
 function ProfileForm({

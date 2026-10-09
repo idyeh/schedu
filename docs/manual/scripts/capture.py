@@ -12,7 +12,7 @@ import subprocess
 
 root = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
-parser.add_argument('phase', choices=['open', 'student', 'first-login', 'instructor', 'admin', 'schedule', 'close'])
+parser.add_argument('phase', choices=['open', 'student', 'first-login', 'instructor', 'admin', 'schedule', 'records', 'records-qa', 'close'])
 args = parser.parse_args()
 cli = os.environ.get('PLAYWRIGHT_CLI', str(Path.home() / '.codex/skills/playwright/scripts/playwright_cli.sh'))
 out = root / 'output/playwright/manual'

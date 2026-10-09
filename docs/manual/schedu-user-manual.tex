@@ -75,37 +75,42 @@
 
 {\large For students, instructors and administrators\par}
 \vspace{4mm}
-SchedU brings tutorial availability, bookings and feedback into one workspace. Students reserve a time slot; instructors record attendance and feedback; administrators manage accounts and the timetable.
+SchedU brings tutorial availability, bookings, feedback and records into one workspace. Students reserve a time slot and follow their learning profile; instructors record attendance and feedback; administrators manage accounts, the timetable and statistics.
 
 This manual explains the everyday tasks for each role. System administration and server maintenance are outside its scope.
 
 \vspace{10mm}
 \begin{tikzpicture}[node distance=7mm, every node/.style={font=\small}, card/.style={draw=line,rounded corners=3mm,minimum width=53mm,minimum height=29mm,align=center,fill=white}]
-\node[card] (s) {\textbf{Students}\\[2mm]Book and prepare\\Review feedback};
-\node[card,right=7mm of s] (i) {\textbf{Instructors}\\[2mm]Run tutorials\\Record outcomes};
-\node[card,right=7mm of i] (a) {\textbf{Administrators}\\[2mm]Manage people\\Maintain availability};
+\node[card] (s) {\textbf{Students}\\[2mm]Book and prepare\\Review feedback and progress};
+\node[card,right=7mm of s] (i) {\textbf{Instructors}\\[2mm]Run tutorials\\Record and review outcomes};
+\node[card,right=7mm of i] (a) {\textbf{Administrators}\\[2mm]Manage people and availability\\Read the statistics};
 \end{tikzpicture}
 \vfill
-\smallcaption{Edition 1 · October 2026}
+\smallcaption{Edition 2 · October 2026}
 
 \manualpage{Using this manual}{Find the guidance for your role}{contents}
 Read the shared guidance first, then the pages for your assigned role. In SchedU, a teacher’s role is called \ui{Instructor}. Your role determines which pages and actions appear.
 
+{\renewcommand{\arraystretch}{1.02}
 \begin{tabularx}{\linewidth}{@{}Yr@{}}
 \toprule
 \textbf{Shared guidance} & \textbf{Page}\\
 \tocrow{Sign in and choose your preferences}{signin}
 \tocrow{Check your profile and dashboard}{profile}
-\addlinespace[2mm]
+\addlinespace[1mm]
 \textbf{Students} & \\
 \tocrow{Choose a tutorial}{book}
 \tocrow{Confirm, track or cancel a booking}{manage}
 \tocrow{Read your feedback}{feedback}
-\addlinespace[2mm]
+\tocrow{Follow your learning profile}{learning}
+\tocrow{Review your appointment history}{history}
+\addlinespace[1mm]
 \textbf{Instructors} & \\
 \tocrow{Prepare for and run a tutorial}{instructor}
 \tocrow{Record attendance and feedback}{evaluate}
-\addlinespace[2mm]
+\tocrow{Check your approval history}{approvals}
+\tocrow{Review your guidance history}{guidance}
+\addlinespace[1mm]
 \textbf{Administrators} & \\
 \tocrow{Manage bookings and exceptions}{adminbookings}
 \tocrow{Manage people and accounts}{people}
@@ -115,10 +120,12 @@ Read the shared guidance first, then the pages for your assigned role. In SchedU
 \tocrow{Set up recurring teaching windows}{windows}
 \tocrow{Import a timetable and adjust individual slots}{timetable}
 \tocrow{Remove sessions across the semester}{remove}
-\addlinespace[2mm]
+\tocrow{Read the statistics}{statistics}
+\tocrow{Open student and teacher records}{records}
+\addlinespace[1mm]
 \tocrow{Resolve common problems}{help}
 \bottomrule
-\end{tabularx}
+\end{tabularx}}
 
 \subhead{How the work fits together}
 \begin{center}
@@ -180,7 +187,7 @@ Phone number & Optional. If supplied, it must use a valid phone-number format.\\
 Select \ui{Save profile} after making changes. Class lists are defined by the institution. If the correct class is missing, contact an administrator rather than choosing an unrelated class.
 
 \subhead{Use Overview to decide what to do next}
-\ui{Overview} summarises your activity and upcoming tutorials. Students can check active bookings, attendance and feedback, then open \ui{Book a tutorial}, \ui{My bookings} or \ui{My feedback}. Instructors see their teaching activity and sessions; administrators see an institution-wide summary.
+\ui{Overview} summarises your activity and upcoming tutorials. Students can check active bookings, attendance and feedback, then open \ui{Book a tutorial}, \ui{My bookings} or \ui{My feedback}. Instructors see their teaching activity and sessions; administrators see an institution-wide summary. Below the profile form, students also find their records (page~\pageref{learning}) and instructors theirs (page~\pageref{approvals}).
 
 The navigation changes with your assigned role. You cannot grant yourself another role from your profile.
 
@@ -263,6 +270,47 @@ If feedback or attendance appears incorrect, contact the instructor or an admini
 An approved or in-progress booking has not been completed. Check its status first. Ask the instructor if the tutorial has finished but the feedback has not appeared.
 \end{note}
 
+\manualpage{Students}{Follow your learning profile}{learning}
+Open \ui{My profile}. Below your details and password, \ui{Learning profile} summarises every tutorial that a member of staff has evaluated. It fills in by itself when attendance and feedback are recorded; there is nothing for you to enter.
+
+\shot[width=.68\linewidth]{student-learning-profile.png}{A student with four evaluated tutorials: three attended and one absence. The cancelled booking is counted separately.}
+
+\begin{tabularx}{\linewidth}{@{}L{38mm}Y@{}}
+\toprule
+\textbf{Part of the card} & \textbf{What it shows}\\
+\midrule
+Tutorials attended & Evaluated tutorials with any mark other than zero. Absences and cancellations are counted beneath it.\\
+Attendance rate & Attended tutorials as a share of evaluated tutorials. Upcoming, cancelled and draft bookings are left out.\\
+Average mark & The mean mark of the tutorials you attended, using your institution’s evaluation options (page~\pageref{feedback}); it is not a percentage. An absence lowers the attendance rate, not this average.\\
+Time in tutorials & The scheduled length of the tutorials you attended, added together.\\
+Marks over time & One bar for each evaluated tutorial, oldest on the left, up to the latest 24. An absence is a short grey mark. Point to a bar for its date and evaluation, or select it to open that tutorial.\\
+Evaluations received & How often you received each evaluation option, and its share of your evaluated tutorials.\\
+Latest feedback & The three most recent written comments, with the date and who recorded each one.\\
+\bottomrule
+\end{tabularx}
+
+\manualpage{Students}{Review your appointment history}{history}
+\ui{Appointment history} is the second card under \ui{My profile}. It lists every booking you have submitted, newest first. Drafts are not listed because a draft never reserved a seat.
+
+\shot[width=.76\linewidth]{student-appointment-history.png}{Six appointments: one waiting for approval, three attended, one absence and one cancelled by staff.}
+
+The filters above the table narrow the list, and the number beside each filter is its count. Select a tutorial’s date and time to open its details, with the instructors on duty, your topic and the full status history. Longer histories show ten appointments per page.
+
+\begin{tabularx}{\linewidth}{@{}L{50mm}Y@{}}
+\toprule
+\textbf{Result} & \textbf{Meaning}\\
+\midrule
+Awaiting approval & The slot had no instructor when you booked. Staff must approve the request before its start time.\\
+Not approved before the start & The request was still waiting when the tutorial was due to begin. Ask an administrator what to do next.\\
+Upcoming & Approved and not yet started. The second line shows whether it was approved automatically or by a named member of staff.\\
+Awaiting feedback & The start time has passed and no outcome has been recorded yet.\\
+A mark and its evaluation & The tutorial was evaluated; a mark of zero is an absence. The second line names who recorded it.\\
+Cancelled by the student or by staff & Who cancelled. Only your own cancellation starts a booking pause.\\
+\bottomrule
+\end{tabularx}
+
+\ui{Status} is the booking’s stage in the diagram on page~\pageref{manage}. Archived appointments keep their result here.
+
 \manualpage{Instructors}{Prepare for and run a tutorial}{instructor}
 Use \ui{Overview} to review your activity, then open \ui{My sessions} for the bookings assigned to your instructor pool. A student has reserved a place in the time slot and may meet any instructor on duty.
 
@@ -306,6 +354,53 @@ Open the details of a completed or cancelled booking and select \ui{Archive} whe
 \begin{note}
 Check the mark and wording before saving. The current interface does not offer a general edit action for a completed evaluation. If a correction is needed, report the booking details to an administrator.
 \end{note}
+
+\manualpage{Instructors}{Check your approval history}{approvals}
+Open \ui{My profile}. \ui{Approval history} lists the booking requests for the sessions assigned to you, newest request first, and shows how each one was approved. Its \ui{Status} column gives the booking’s current stage.
+
+\shot[width=.76\linewidth]{teacher-approval-history.png}{An instructor with 21 requests: one waiting for approval, one approved personally and 19 approved automatically.}
+
+A request is listed when you are in the instructor pool of its slot or of its teaching window, and whenever you approved it yourself. Select a tutorial’s date and time to open its details; \ui{Approve} is there for a waiting request.
+
+\begin{tabularx}{\linewidth}{@{}L{50mm}Y@{}}
+\toprule
+\textbf{Approval} & \textbf{Meaning}\\
+\midrule
+Approved automatically & The slot had an assigned instructor, so the booking was approved when the student submitted it.\\
+Approved by you & You approved a request for a slot that had no instructor. The time of your approval is shown.\\
+Approved by a named person & A colleague or an administrator approved it.\\
+Awaiting approval & Nobody has approved it yet. It can only be approved before the tutorial’s start time.\\
+Not approved before the start & The start time passed while it was waiting. Ask an administrator to resolve it.\\
+Cancelled before approval & The booking was cancelled while it was still waiting.\\
+\bottomrule
+\end{tabularx}
+
+The figures count the same list. \ui{Requests in total} leaves out drafts. Use the filters to see one group at a time; the list shows ten requests per page.
+
+\manualpage{Instructors}{Review your guidance history}{guidance}
+\ui{Guidance history}, the second card under \ui{My profile}, lists the tutorials you started or recorded, with each outcome and the feedback you wrote. It also lists started sessions that still need an outcome.
+
+\shot[width=.76\linewidth]{teacher-guidance-history.png}{Seven tutorials guided for five students, one absence recorded and one started session still waiting for feedback.}
+
+\subhead{Whose history a tutorial appears in}
+\begin{enumerate}
+\item A completed tutorial belongs to whoever saved its feedback. If you start a session and a colleague records the outcome, it is listed for your colleague.
+\item A session in progress belongs to whoever selected \ui{Start session}.
+\item An approved tutorial whose start time has passed, and which nobody has started or recorded, is \ui{Awaiting feedback} for every instructor in its pool until one of you records it.
+\end{enumerate}
+
+\begin{tabularx}{\linewidth}{@{}L{42mm}Y@{}}
+\toprule
+\textbf{Figure} & \textbf{What it counts}\\
+\midrule
+Tutorials guided & Tutorials you recorded with any mark other than zero. Absences you recorded are counted beneath it.\\
+Students guided & Different students among those tutorials, with the total scheduled time.\\
+Average mark given & The mean mark of the tutorials you recorded as attended.\\
+Awaiting feedback & Started sessions without an outcome. Open each one and select \ui{Record feedback}.\\
+\bottomrule
+\end{tabularx}
+
+Records that you approved or recorded stay in your history if you are later moved to other sessions. You can still open them, but the staff actions are available only for sessions currently assigned to you.
 
 \manualpage{Administrators}{Manage bookings and exceptions}{adminbookings}
 Open \ui{All meetings} to review bookings across the institution. \ui{Upcoming \& active} contains submitted, approved and in-progress bookings; \ui{History} contains past outcomes. Select \ui{View details} to inspect a meeting and its status history.
@@ -471,29 +566,67 @@ Removed recurring occurrences stay closed; removed one-off slots disappear. Week
 
 If the schedule changes before confirmation, review the selection again. This operation clears availability; it is not a full-system data reset.
 
+\manualpage{Administrators}{Read the statistics}{statistics}
+\ui{Statistics} gives administrators and the system administrator one view of every appointment. It reads the bookings already in SchedU, so earlier records are included, and it refreshes each minute while it is open. Nothing on this page changes a booking.
+
+\shot[width=.6\linewidth]{statistics-overview.png}{Institute figures and breakdowns for the demonstration: 23 appointments from 15 students.}
+
+\begin{tabularx}{\linewidth}{@{}L{44mm}Y@{}}
+\toprule
+\textbf{Figure or chart} & \textbf{What it counts}\\
+\midrule
+Appointments & Every submitted booking, with the number of students who made them and how many are still active. Drafts are left out.\\
+Tutorials attended & Evaluated tutorials with any mark other than zero, with absences and cancellations beneath.\\
+Attendance rate & Attended tutorials as a share of evaluated tutorials.\\
+Average mark & The mean mark across attended tutorials. Absences are not averaged in.\\
+Awaiting approval & Requests that staff can still approve, and how many passed their start time unapproved.\\
+Awaiting feedback & Approved or in-progress tutorials whose start time has passed without a recorded outcome.\\
+Appointments by status & One bar for each booking status. Archived records are counted as Archived.\\
+How requests were approved & Automatic approvals, approvals by staff, and requests that are waiting, expired or were cancelled first.\\
+Evaluations recorded & How often each evaluation option was given.\\
+\bottomrule
+\end{tabularx}
+
+Each bar shows its count and its share of the chart’s total. Use \ui{Awaiting approval} and \ui{Awaiting feedback} as a daily check, then act on the bookings in \ui{All meetings} (page~\pageref{adminbookings}).
+
+\manualpage{Administrators}{Open student and teacher records}{records}
+Below the charts, \ui{Students} and \ui{Teachers} list one row for each person. Select a name to open that person’s records; \ui{Back to statistics} returns to the list with your tab, search and page kept.
+
+\shot[width=.73\linewidth]{statistics-students.png}{Students with appointments, most appointments first. Search by name, ID or class, or switch to All students.}
+
+A student’s row opens the same \ui{Learning profile} and \ui{Appointment history} that the student sees (pages~\pageref{learning}–\pageref{history}). The list shows 50 students per page. A dash means there is nothing to average yet.
+
+\shot[width=.73\linewidth]{statistics-teachers.png}{Each instructor’s requests, approvals and guided tutorials. An administrator appears after approving or recording a tutorial.}
+
+A teacher’s row opens the same \ui{Approval history} and \ui{Guidance history} that the instructor sees (pages~\pageref{approvals}–\pageref{guidance}), counted by the same rules. Every instructor is listed. Any other account is added once it approves or records a tutorial, and it stays listed if its role later changes or the account is removed.
+
+Selecting a tutorial’s date inside a person’s records opens the usual details, where your administrator actions remain available.
+
 \manualpage{Everyone}{Resolve common problems}{help}
 \begin{tabularx}{\linewidth}{@{}L{48mm}Y@{}}
 \toprule
 \textbf{What you see} & \textbf{What to check or do}\\
 \midrule
 Cannot sign in & Check the institutional ID and password supplied to you. Contact an administrator for a password reset if needed.\\
-\addlinespace
+\addlinespace[0.9mm]
 Review booking is unavailable & Select a slot, complete your profile and check whether you have reached the active-booking limit or have a booking pause.\\
-\addlinespace
+\addlinespace[0.9mm]
 No suitable time slots & Try another date within the booking period. Slots may be full, closed, past their start time or not yet published. Ask an administrator about availability.\\
-\addlinespace
+\addlinespace[0.9mm]
 Booking is still Submitted & The slot had no assigned instructor when submitted. Ask an administrator to confirm the staffing and approval.\\
-\addlinespace
+\addlinespace[0.9mm]
 Booking paused & Check the end date shown in the app. An administrator may lift the restriction where appropriate. Your existing records remain available.\\
-\addlinespace
+\addlinespace[0.9mm]
 Cancel booking is missing & Students can cancel only submitted or approved bookings before the start. Instructors need the cancellation setting enabled and responsibility for the booking.\\
-\addlinespace
+\addlinespace[0.9mm]
 Absent cannot be saved & Wait until the tutorial’s scheduled end time before recording a mark of zero.\\
-\addlinespace
+\addlinespace[0.9mm]
+A tutorial is missing from Guidance history & It is listed for whoever recorded its outcome (page~\pageref{guidance}).\\
+\addlinespace[0.9mm]
 Class or room is missing & Ask an administrator to check the institution’s list. An ordinary administrator must refer changes to those lists to the system administrator.\\
-\addlinespace
+\addlinespace[0.9mm]
 Roster import fails & Check duplicate IDs, required names, entry years and exact class labels. Save as UTF-8 CSV and review the errors. No rows are imported on validation failure.\\
-\addlinespace
+\addlinespace[0.9mm]
 Schedule change or deletion is blocked & Look for active bookings and instructor assignments. Batch session removal keeps booked sessions automatically. Ordinary account deletion preserves linked meeting records by refusing the deletion.\\
 \bottomrule
 \end{tabularx}

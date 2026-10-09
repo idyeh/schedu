@@ -15,6 +15,14 @@ Bilingual university tutorial booking for students, instructors, administrators 
 - Evaluation options default to 0 (absent), 30 (poor), 40 (satisfactory), 70 (excellent).
 - User preferences are saved on the device. Automatic theme follows the browser/system preference.
 
+## Records and statistics
+
+- **Students:** My profile shows a Learning profile and an Appointment history. The profile reports tutorials attended, attendance rate, average mark, time in tutorials, marks over time, the evaluations received and the three latest written comments. The history lists every submitted booking with its status and result, newest first, with filters for upcoming, attended, absent and cancelled appointments; drafts are not included. Selecting a tutorial's date opens its details.
+- **Instructors:** My profile shows an Approval history and a Guidance history. Approval history lists the requests for the instructor's assigned sessions and how each was approved (automatically, by the instructor, by someone else, still waiting, not approved before the start, or cancelled before approval) beside its current status. Guidance history lists the tutorials the instructor started or recorded, with the outcome and feedback, and started sessions in their pool that still need feedback.
+- **Administrators and the sysadmin:** Statistics shows institute totals (appointments, tutorials attended, attendance rate, average mark, requests awaiting approval and sessions awaiting feedback), breakdowns by status, approval method and evaluation, and a row per student and per teacher. Opening a row shows that person's cards exactly as they see them. Other accounts appear in the teacher list once they approve or record a tutorial, including accounts that have since changed role or been removed.
+- **How figures are counted:** a mark of 0 is an absence and any other mark is an attended tutorial. Attendance rate is attended tutorials over evaluated tutorials. Average mark covers attended tutorials only, so an absence lowers the attendance rate rather than the average. A tutorial is credited to whoever recorded its outcome, or to whoever started it while it is still in progress. Requests can only be approved before the start time.
+- **Scope and data:** every figure is read from the bookings and status histories the app already stores, so existing records appear immediately and no migration, port or environment variable is added. The pages are read-only. An instructor keeps the records they approved or recorded if they are later reassigned, but cannot change those meetings. Statistics refreshes each minute while open.
+
 ## Initial setup
 
 The private site presents a one-time administrator setup when no accounts exist. Create the sole institutional system administrator (sysadmin) account, then issue staff accounts, configure instructor availability and import students. No demo student records or default passwords are shipped.

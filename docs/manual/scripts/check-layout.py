@@ -11,7 +11,7 @@ import pdfplumber
 
 root = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
-parser.add_argument('--expected-pages', type=int, default=18)
+parser.add_argument('--expected-pages', type=int, default=24)
 args = parser.parse_args()
 pdf = root / 'output/pdf/schedu-user-manual.pdf'
 out = root / 'tmp/pdfs/schedu-manual/review'
